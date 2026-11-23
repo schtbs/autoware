@@ -114,7 +114,7 @@ repositories:
   launcher/autoware_launch:
     type: git
     url: https://github.com/oussamabensalemtn-cloud/autoware_launch
-    version: 0.52.0
+    version: Share_custom
 
   # sensor_component
   sensor_component/external/sensor_component_description:
