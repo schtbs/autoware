@@ -1,0 +1,6 @@
+ repositories:
+ # Custom
+  custom/autoware_custom:
+    type: git
+    url: https://github.com/schtbs/autoware_custom.git
+    version: main
