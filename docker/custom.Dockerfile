@@ -7,24 +7,28 @@ SHELL ["/bin/bash", "-c"]
 # Set working directory
 WORKDIR /home/aw/autoware
 
-# Install CARLA Python client
-# RUN pip install https://github.com/gezp/carla_ros/releases/download/carla-0.9.15-ubuntu-22.04/carla-0.9.15-cp310-cp310-linux_x86_64.whl
-
-# Update rosdep and install dependencies from source
-RUN --mount=type=bind,source=src,target=/home/aw/autoware/src \
-    sudo apt-get update && \
-    sudo apt-get upgrade -y && \
+# Upgrade base packages and refresh rosdep cache (cached across src/ changes)
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && \
     rosdep update && \
-    sudo rosdep install -y \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install workspace dependencies from source
+RUN --mount=type=bind,source=src,target=/home/aw/autoware/src \
+    DEBIAN_FRONTEND=noninteractive apt-get update && \
+    source "/opt/ros/${ROS_DISTRO}/setup.bash" && \
+    DEBIAN_FRONTEND=noninteractive rosdep install -y \
         --from-paths src \
         --ignore-src \
-        --rosdistro $ROS_DISTRO && \
-    sudo apt-get clean && \
-    sudo rm -rf /var/lib/apt/lists/*
+        --rosdistro "${ROS_DISTRO}" \
+        --skip-keys "autoware_minimap_overlay_rviz_plugin autoware_polar_grid common_sensor_launch tier4_datetime_rviz_plugin" && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Global environment variables for all users and processes
 ENV ROS_DOMAIN_ID=0 \
-    ROS_LOCALHOST_ONLY=0 \
+    ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET \
     CYCLONEDDS_URI=file:///home/aw/autoware/config/cyclonedds.xml
 
 # Create shared setup script and hook into interactive shells (including dynamic HOST_UID)
