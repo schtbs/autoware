@@ -40,3 +40,12 @@ The nominal AD system is ROS 2 on the same network. Run the MRM Autoware in its 
 - A new route is requested when there is none, the route state is not `SET`, the ego left the route, or less than `min_remaining_m` is left. If the map ends (the goal would not change), the old route stays.
 - After the trigger (`/mrm/trigger`) the route is frozen.
 - Several parallel lanelets often contain the ego (forks, adjacent lanes). The ego lanelet is chosen by containment, distance and heading; a lanelet on the current route wins among equally good candidates.
+
+## Stop planner (`mrm_stop_planner`)
+- Input: `/planning/trajectory` (Autoware's plan), `/localization/kinematic_state`, `/mrm/trigger`. Output: `/mrm/trajectory`, `/mrm/status` (`diagnostic_msgs/DiagnosticStatus`: states `standby`, `active`, `stopped`, `invalid`).
+- Runs at 20 Hz on the latest ego pose, so the first trajectory point is the ego rear axle in every cycle (MRM-001), also in standby.
+- Geometry: Autoware's lane path with a cubic lateral blend from the ego pose back onto the path (MRM-002). The blend length is sized for `blend_lat_acc_mps2` (0.5). At 8 m/s, 0.8 m offset plus 4 deg heading error need about 49 m, which is longer than the stop distance (about 27 m). The car then stops before it is back on the lane center.
+- Speed: `min(Autoware speed, stop profile)` with a jerk-limited profile (`decel_mps2` 1.5, `jerk_mps3` 1.0). Autoware's speed lags or leads the real speed in hot standby, so it only limits as far as `plan_max_decel_mps2` (3.0) can reach it from the ego speed. A stop for an obstacle that needs more braking than that is not demanded. This is a decision to review for safety.
+- On the trigger the stop profile and the stop point are latched, so the stop point does not creep while braking.
+- Standby with an invalid input (no ego state, no plan, plan older than `max_input_age_s`, ego more than `max_offset_m` off the path): nothing is published (MRM-004). After the trigger the last plan is used.
+- Simulator result (sample map, nominal 0.8 m off center, trigger at 7.5 m/s): stop at 25.3 m (planned 23.9 m). The measured peak deceleration is 1.94 m/s2 against 1.5 m/s2 planned, so Autoware's controller and the sample vehicle do not track the profile exactly. That is not the planner, but our vehicle controller needs the same check on the car.
