@@ -32,3 +32,11 @@ The core must not contain sim-only or car-only code. All new topics use the `/mr
 
 ## Network isolation on the car
 The nominal AD system is ROS 2 on the same network. Run the MRM Autoware in its own `ROS_DOMAIN_ID` / CycloneDDS config (`config/cyclonedds.xml`) so that generic Autoware topics (`/planning/*`, `/control/*`, ...) don't collide. Only the trigger and the bridge cross over.
+
+## Route generator (`mrm_route_generator`)
+- The nominal goal is unknown, so the route follows the current lane (straight successors preferred) for `route_length_m` (300 m default) and ends `goal_back_m` before the end of the last lanelet.
+- The map is read from `map_path` (lanelet2 file + `map_projector_info.yaml`). Only the `MGRS` projector is supported so far, other types raise an error.
+- First route: `/api/routing/set_route_points`. Later changes: `/api/routing/change_route_points` (Autoware answers "already set" to `set_route_points`). Re-routing while autonomous works in the planning simulator. If a change is refused, it falls back to `clear_route` + `set_route_points`. Autoware refuses `clear_route` while the route is in use, so this fallback has not worked so far in simulation.
+- A new route is requested when there is none, the route state is not `SET`, the ego left the route, or less than `min_remaining_m` is left. If the map ends (the goal would not change), the old route stays.
+- After the trigger (`/mrm/trigger`) the route is frozen.
+- Several parallel lanelets often contain the ego (forks, adjacent lanes). The ego lanelet is chosen by containment, distance and heading; a lanelet on the current route wins among equally good candidates.
