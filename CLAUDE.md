@@ -41,6 +41,24 @@ ros2 launch autoware_launch planning_simulator.launch.xml \
   vehicle_model:=sample_vehicle sensor_model:=sample_sensor_kit
 ```
 
+## MRM simulation (headless scenarios, no RViz)
+```bash
+scripts/run_mrm_scenarios.sh                    # all scenarios, each in a fresh container (~70 s each)
+scripts/run_mrm_scenarios.sh straight_offset    # one scenario
+cat build/mrm_results/*.txt                     # KPI tables with PASS/FAIL per requirement
+```
+Scenarios live in `src/custom/autoware_custom/mrm_sim_tools/config/scenarios/`. The KPI limits are in
+`mrm_sim_tools/kpi.py` and come from `docs/requirements.md`.
+
+Interactive (RViz) in the container, after building (`colcon build --symlink-install --packages-select mrm_route_generator mrm_stop_planner mrm_sim_tools mrm_launch`):
+```bash
+ros2 launch mrm_launch mrm_planning_simulator.launch.xml \
+  map_path:=/home/aw/autoware_data/maps/sample-map-planning \
+  path_file:=$(ros2 pkg prefix mrm_sim_tools)/share/mrm_sim_tools/config/paths/sample_map_lanelet_84.yaml
+# set the initial pose in RViz, change to autonomous mode (the route is generated automatically), then trigger:
+ros2 topic pub --once /mrm/trigger std_msgs/msg/Bool "{data: true}"
+```
+
 ## More documentation
 - [docs/git-workflow.md](docs/git-workflow.md): branches, PRs, which repo gets which change.
 - [docs/build.md](docs/build.md): building and testing.
