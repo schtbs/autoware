@@ -1,0 +1,12 @@
+# MRM requirements
+
+Tracked requirements for the MRM stack. Every requirement needs a verification method.
+Numeric limits marked **TBD** are proposals and must be confirmed with the controller team (MABX).
+
+| ID | Requirement | Rationale | Verification | Status |
+|---|---|---|---|---|
+| MRM-001 | The first point of `/mrm/trajectory` is the pose of the ego rear-axle center (`base_link`). Lateral offset between ego and the trajectory's first point is 0 at every cycle, not only at the trigger (proposed tolerance: <= 0.02 m, **TBD**). | A lateral offset at the switch from nominal to MRM makes the tracking controller command a large steering angle, yaw acceleration and lateral acceleration to remove the error. | Stop-planner unit test; scenario KPI: offset ego -> first point, evaluated at the trigger time, with the ego driving off the lane center. | open |
+| MRM-002 | The path returns from the ego pose to the Autoware lane path with a smooth lateral blend. Heading at the first point equals the ego heading (proposed: <= 1 deg, **TBD**). Curvature, curvature rate and resulting lateral acceleration / yaw acceleration of the blend stay below limits (**TBD**). | Same as MRM-001. A hard offset correction is not acceptable, neither is a path that departs the lane. | Unit test of the blend; KPI plots of lateral acceleration and yaw acceleration after the trigger. | open |
+| MRM-003 | The ego pose used by the MRM stack refers to the rear-axle center. On the car, the transform from the GNSS antenna to `base_link` and the published `/localization/kinematic_state` must be verified against this. | A constant offset of the localization reference point causes the same error as MRM-001, and the unit tests cannot find it. | Check the Ioniq 5 tf tree and measure with a straight drive on the test track. | open |
+| MRM-004 | `/mrm/trajectory` is valid whenever the nominal system drives: no gaps longer than a limit (**TBD**), no stale trajectory. If the stack cannot guarantee a valid trajectory, it says so (status), instead of publishing an old trajectory. | The MABX may switch at any time. Re-routing in Autoware can briefly remove the plan (see `mrm_route_generator`). | Scenario with re-routing: measure the gap; the status flag is checked against it. | open |
+| MRM-005 | The route is frozen from the trigger on. The maneuver never changes the route afterwards. | A route change during the maneuver can move the stop point or switch lanes. | Scenario: trigger, then leave the route; no route service call after the trigger. | open |

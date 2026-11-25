@@ -44,4 +44,5 @@ ros2 launch autoware_launch planning_simulator.launch.xml \
 ## More documentation
 - [docs/git-workflow.md](docs/git-workflow.md): branches, PRs, which repo gets which change.
 - [docs/build.md](docs/build.md): building and testing.
+- [docs/requirements.md](docs/requirements.md): tracked MRM requirements (read before changing trajectory generation).
 - [docs/interfaces.md](docs/interfaces.md): topics, trigger, MABX bridge, sim vs car.
