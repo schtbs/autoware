@@ -44,3 +44,8 @@ RUN printf '%s\n' \
 
 # Load automatically in non-interactive "bash -c" commands
 ENV BASH_ENV=/etc/autoware_env.sh
+
+# Wrapper entrypoint: grants the unprivileged user access to /dev/dri (needed for RViz rendering)
+COPY --chmod=755 docker/custom-entrypoint.sh /custom-entrypoint.sh
+ENTRYPOINT ["/custom-entrypoint.sh"]
+CMD ["/bin/bash"]
