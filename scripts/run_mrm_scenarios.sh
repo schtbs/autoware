@@ -22,9 +22,10 @@ echo "building MRM packages ..."
 in_container "colcon build --symlink-install --packages-select mrm_route_generator mrm_stop_planner mrm_sim_tools mrm_launch > build/mrm_build.log 2>&1; source install/setup.bash 2>/dev/null; true" || exit 1
 
 if [ $# -gt 0 ]; then NAMES="$*"; else NAMES=$(in_container "source install/setup.bash 2>/dev/null; ros2 run mrm_sim_tools run_scenario --file $FILE --list" | grep -v '^\['); fi
-rm -rf "$ROOT/build/mrm_results"
+mkdir -p "$ROOT/build/mrm_results"
 for n in $NAMES; do
   echo "--- $n"
+  rm -f "$ROOT/build/mrm_results/$n".*
   in_container "source install/setup.bash 2>/dev/null; ros2 run mrm_sim_tools run_scenario --file $FILE --name $n --out $OUT" | grep -E "^(===|  (PASS|FAIL|info)|RESULT|trigger)" 
 done
 echo; echo "reports: $ROOT/build/mrm_results/*.txt"
