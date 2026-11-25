@@ -46,7 +46,9 @@ ros2 launch autoware_launch planning_simulator.launch.xml \
 scripts/run_mrm_scenarios.sh                    # all scenarios, each in a fresh container (~70 s each)
 scripts/run_mrm_scenarios.sh straight_offset    # one scenario
 cat build/mrm_results/*.txt                     # KPI tables with PASS/FAIL per requirement
+scripts/run_mrm_scenarios.sh --gui parked_car_avoidable   # watch it in RViz (needs a display)
 ```
+In `--gui` mode the MRM trajectory is the magenta line next to Autoware's plan. Each scenario starts 25 s after RViz, the simulator stays up for 20 s at the end. Several names run one after the other.
 Scenarios live in `src/custom/autoware_custom/mrm_sim_tools/config/scenarios/`. The KPI limits are in
 `mrm_sim_tools/kpi.py` and come from `docs/requirements.md`.
 
