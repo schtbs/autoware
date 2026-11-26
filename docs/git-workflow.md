@@ -7,8 +7,8 @@
 ## Which repo gets which change
 | Change | Repo |
 |---|---|
-| MRM nodes, sim tools, MRM launch files | `src/custom/autoware_custom` |
-| Ioniq 5 vehicle/sensor packages, MABX bridge, Autoware param changes | `src/launcher/autoware_launch` (our fork) |
+| MRM nodes, sim tools, `mrm_core.launch.xml` | `src/custom/autoware_custom` |
+| Ioniq 5 vehicle/sensor packages, MABX bridge, domain bridge, Autoware param changes, all entry launch files (standard/MRM, simulation/car in `autoware_launch/launch/`) | `src/launcher/autoware_launch` (our fork) |
 | Dockerfile, `repositories/*.repos`, `config/`, docs, `CLAUDE.md` | this repo (root) |
 
 Rules:

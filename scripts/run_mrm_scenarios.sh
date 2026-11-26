@@ -15,10 +15,12 @@ IMAGE=${IMAGE:-autoware-custom:latest}
 DATA=${AUTOWARE_DATA:-$(dirname "$ROOT")/autoware_data}
 FILE=${SCENARIO_FILE:-/home/aw/autoware/src/custom/autoware_custom/mrm_sim_tools/config/scenarios/sample_map.yaml}
 OUT=/home/aw/autoware/build/mrm_results
+# own ROS domain: on the car, domain 0 carries the sensors and the nominal AD system
+SIM_DOMAIN=${SIM_DOMAIN_ID:-99}
 SRC="source /opt/ros/jazzy/setup.bash; source /home/aw/autoware/install/setup.bash 2>/dev/null"
 
 in_container() {
-  docker run --rm --net host --privileged -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+  docker run --rm --net host --privileged -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -e ROS_DOMAIN_ID="$SIM_DOMAIN" \
     -v "$DATA":/home/aw/autoware_data -v "$ROOT":/home/aw/autoware -w /home/aw/autoware \
     "$IMAGE" bash -c "$SRC; $1"
 }
@@ -26,13 +28,13 @@ in_container() {
 in_container_gui() {   # same display / GPU flags as the normal Autoware container
   docker run --rm --name mrm-gui --net host --privileged --gpus all --runtime=nvidia \
     -e DISPLAY="${DISPLAY:-:0}" -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_VISIBLE_DEVICES=all -e QT_X11_NO_MITSHM=1 \
-    -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+    -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -e ROS_DOMAIN_ID="$SIM_DOMAIN" -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
     -v "$DATA":/home/aw/autoware_data -v "$ROOT":/home/aw/autoware -w /home/aw/autoware \
     "$IMAGE" bash -c "$SRC; $1"
 }
 
 echo "building MRM packages ..."
-in_container "colcon build --symlink-install --packages-select mrm_route_generator mrm_stop_planner mrm_sim_tools mrm_launch > build/mrm_build.log 2>&1; source install/setup.bash 2>/dev/null; true" || exit 1
+in_container "colcon build --symlink-install --packages-select mrm_route_generator mrm_stop_planner mrm_sim_tools mrm_launch autoware_launch > build/mrm_build.log 2>&1; source install/setup.bash 2>/dev/null; true" || exit 1
 
 if [ $# -gt 0 ]; then NAMES="$*"; else NAMES=$(in_container "source install/setup.bash 2>/dev/null; ros2 run mrm_sim_tools run_scenario --file $FILE --list" | grep -v '^\['); fi
 mkdir -p "$ROOT/build/mrm_results"

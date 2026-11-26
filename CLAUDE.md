@@ -52,14 +52,17 @@ In `--gui` mode the MRM trajectory is the magenta line next to Autoware's plan. 
 Scenarios live in `src/custom/autoware_custom/mrm_sim_tools/config/scenarios/`. The KPI limits are in
 `mrm_sim_tools/kpi.py` and come from `docs/requirements.md`.
 
-Interactive (RViz) in the container, after building (`colcon build --symlink-install --packages-select mrm_route_generator mrm_stop_planner mrm_sim_tools mrm_launch`):
+Interactive (RViz) in the container, after building (`colcon build --symlink-install --packages-select mrm_route_generator mrm_stop_planner mrm_sim_tools mrm_launch autoware_launch`):
 ```bash
-ros2 launch mrm_launch mrm_planning_simulator.launch.xml \
+ros2 launch autoware_launch mrm_planning_simulator.launch.xml \
   map_path:=/home/aw/autoware_data/maps/sample-map-planning \
   path_file:=$(ros2 pkg prefix mrm_sim_tools)/share/mrm_sim_tools/config/paths/sample_map_lanelet_84.yaml
 # set the initial pose in RViz, change to autonomous mode (the route is generated automatically), then trigger:
 ros2 topic pub --once /mrm/trigger std_msgs/msg/Bool "{data: true}"
 ```
+
+## MRM stack on the car (toaster)
+Runs in `ROS_DOMAIN_ID=101`. `domain_bridge` copies the sensor topics from the nominal system's domain 0 (nothing goes back). Stop the old stack first (`docker stop angry_kowalevski practical_hertz`). The stacks start with the fork's launch files in `autoware_launch/launch/` (`autoware.launch.xml`, `mrm.launch.xml`, and the simulators `planning_simulator.launch.xml`, `mrm_planning_simulator.launch.xml`), with the car arguments (ANavS localization, no NDT). The bridge is started by the Ioniq 5 vehicle interface. Commands, dry run (`autobox_ip:=127.0.0.1`) and bridged topics: [docs/car-integration.md](docs/car-integration.md).
 
 ## More documentation
 - [docs/git-workflow.md](docs/git-workflow.md): branches, PRs, which repo gets which change.
