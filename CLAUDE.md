@@ -52,7 +52,7 @@ In `--gui` mode the MRM trajectory is the magenta line next to Autoware's plan. 
 Scenarios live in `src/custom/autoware_custom/mrm_sim_tools/config/scenarios/`. The KPI limits are in
 `mrm_sim_tools/kpi.py` and come from `docs/requirements.md`.
 
-Interactive (RViz) in the container, after building (`colcon build --symlink-install --packages-select mrm_route_generator mrm_stop_planner mrm_sim_tools mrm_launch autoware_launch`):
+Interactive (RViz) in the container, after building (`colcon build --symlink-install --packages-select mrm_route_generator mrm_stop_planner mrm_sim_tools mrm_trigger_udp mrm_launch autoware_launch`):
 ```bash
 ros2 launch autoware_launch mrm_planning_simulator.launch.xml \
   map_path:=/home/aw/autoware_data/maps/sample-map-planning \
