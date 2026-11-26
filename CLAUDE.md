@@ -21,17 +21,17 @@ Build (from the repo root):
 ```bash
 docker build -t autoware-custom:latest -f docker/custom.Dockerfile .
 ```
-Run:
+Run (from the repo root; works on every machine because paths come from `$PWD`). `autoware_data` is expected next to the repo (`<parent>/autoware` + `<parent>/autoware_data`, e.g. `~/work/` on the desktop, `/mnt/data/autoware/` on the toaster); override with `AUTOWARE_DATA=/some/path`:
 ```bash
 docker run --rm -it --net host --privileged --gpus all \
-  -e DISPLAY=$DISPLAY -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_VISIBLE_DEVICES=all \
+  -e DISPLAY=${DISPLAY:-:0} -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_VISIBLE_DEVICES=all \
   -e HOST_UID=$(id -u) -e HOST_GID=$(id -g) -e QT_X11_NO_MITSHM=1 \
   -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
-  -v $HOME/work/autoware_data:/home/aw/autoware_data \
-  -v $HOME/work/autoware:/home/aw/autoware \
-  -v $HOME/work/autoware/config/cyclonedds.xml:/home/aw/autoware/config/cyclonedds.xml \
+  -v "${AUTOWARE_DATA:-$(dirname "$PWD")/autoware_data}":/home/aw/autoware_data \
+  -v "$PWD":/home/aw/autoware \
   -w /home/aw/autoware --runtime=nvidia autoware-custom:latest bash
 ```
+`DISPLAY` falls back to `:0`: over SSH (where `DISPLAY` is empty) RViz opens on the machine's own monitor, e.g. the toaster's screen in the car. With an empty `DISPLAY` RViz crashes on startup ("could not connect to display"). Showing RViz on a remote laptop via `ssh -X` is not set up (it would also need `~/.Xauthority` mounted).
 Inside the container:
 ```bash
 source /opt/ros/jazzy/setup.bash
