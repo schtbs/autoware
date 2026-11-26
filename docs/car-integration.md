@@ -1,6 +1,6 @@
 # MRM stack on the Ioniq 5
 
-State: **prepared, not run on the car.** Everything here was checked in the planning simulator, with the Ioniq 5 vehicle model on the campus map, or in isolation. Nothing was tested with the real sensors, the MicroAutoBox or the nominal AD system.
+State: **started on the toaster in domain 101 with the real sensors (dry run, car parked, see "ROS network"), not driven.** The rest was checked in the planning simulator with the Ioniq 5 vehicle model on the campus map, or in isolation. Not tested yet: the MicroAutoBox link and the stack with the car on a lane.
 
 ## What runs where
 
@@ -20,12 +20,33 @@ nominal AD system ────────────────────�
 
 ## Start
 
+Stop the old stack first. It runs on domain 0 and its `autobox_udp_sender` also talks to the MicroAutoBox: `docker stop angry_kowalevski practical_hertz` (old Autoware in `/home/inkmi5/autoware`, old DDS router in `/home/inkmi5/oussama_ws`). Keep `ouster_lidar_node` running, it publishes `/ouster/points` in domain 0.
+
+All car and simulation entry points are in the fork's `autoware_launch/launch/`:
+
+| | simulation | real vehicle |
+|---|---|---|
+| standard AD stack | `planning_simulator.launch.xml` | `autoware.launch.xml` |
+| MRM stack | `mrm_planning_simulator.launch.xml` | `mrm.launch.xml` |
+
+The MRM launch files include `mrm_launch/mrm_core.launch.xml` (route generator + stop planner, the same in simulation and on the car) from autoware_custom.
+
+The car arguments (same for both stacks):
 ```bash
-export ROS_DOMAIN_ID=<MRM domain>      # not the domain of the nominal system
-export CYCLONEDDS_URI=file:///home/aw/autoware/config/cyclonedds.xml
-ros2 launch mrm_launch mrm_ioniq5.launch.xml map_path:=<map dir>   # e.g. .../maps/autoware_maps/campus_ost
+CAR_ARGS="map_path:=/home/aw/autoware_data/maps/autoware_maps/campus_ost vehicle_model:=ioniq5_vehicle sensor_model:=ioniq5_sensor_kit vehicle_id:=ioniq5 pose_source:=anavs twist_source:=anavs lateral_controller_mode:=pure_pursuit pose_initializer_stop_check:=false"
 ```
-It starts Autoware (`autoware_launch/autoware.launch.xml`, `ioniq5_vehicle` / `ioniq5_sensor_kit`), the MRM core, and the trigger receiver.
+- `pose_source:=anavs twist_source:=anavs`: pose and twist both come from the ANavS (the twist is published on `/fzi/twist_with_covariance_stamped`). `ioniq5_sensor_kit_launch` relays them straight into the EKF, so no Autoware estimator (NDT, gyro_odometer) runs. Any value that is not an Autoware estimator has this effect, the earlier command line called them `AnaVs` / `FZI`.
+- `pose_initializer_stop_check:=false`: see "Localization".
+
+From the repo root on the toaster, in a container started with the CLAUDE.md run command plus `-e ROS_DOMAIN_ID=101`:
+```bash
+ros2 launch autoware_launch autoware.launch.xml $CAR_ARGS     # standard AD stack
+ros2 launch autoware_launch mrm.launch.xml $CAR_ARGS          # MRM stack (next to the nominal system)
+```
+Both send their trajectory to the MicroAutoBox (`10.0.10.20:44444`), the standard stack `/planning/trajectory`, the MRM stack `/mrm/trajectory`. Add `autobox_ip:=127.0.0.1` for a **dry run** (packets go to localhost). Packets only go out once there is a route and a trajectory.
+`mrm.launch.xml` refuses to start when `ROS_DOMAIN_ID` equals `nominal_domain` (default 0).
+The vehicle interface (`ioniq5_vehicle_launch/vehicle_interface.launch.xml`) starts the domain bridge for the sensor topics when `ROS_DOMAIN_ID` differs from `sensor_domain` (default 0), see "ROS network".
+
 Differences from the normal car launch:
 
 | | normal | MRM stack |
@@ -45,7 +66,43 @@ Behavior of the trigger: the first `True` is latched by all MRM nodes (route fro
 
 ## ROS network
 
-The nominal system is ROS 2 on the same network. Generic Autoware topics (`/planning/*`, `/control/*`, `/localization/*`, ...) must not meet. Use a separate `ROS_DOMAIN_ID` for the MRM stack. Only UDP crosses to the MicroAutoBox, nothing crosses by ROS.
+The nominal system is ROS 2 on domain 0 on the same network. Generic Autoware topics (`/planning/*`, `/control/*`, `/localization/*`, ...) must not meet, so the MRM stack runs in **domain 101**.
+`ioniq5_vehicle_launch/config/domain_bridge.yaml` (ROS 2 `domain_bridge`, started by `vehicle_interface.launch.xml` for the standard and the MRM stack) copies only the raw sensor inputs from domain 0 into 101, nothing goes back:
+
+| Topic | Used by |
+|---|---|
+| `/ouster/points` | `ouster_format_converter` (LiDAR) |
+| `/sensor/camera_f/undistorted/image`, `.../camera_info` | camera6 relay, YOLOX (the other cameras are not bridged) |
+| `/geo` | `gnss_poser` |
+| `/hi5/anavs/imu` | IMU relay |
+| `/fzi/twist_with_covariance_stamped` (ANavS twist) | twist relays, `twist_to_velocity_report` |
+| `/hi5/tf/center_rear_axle_ned` | `tf_to_gnssinsorient_converter` |
+| `/steering_angle` | `vehicle_status_publisher` |
+
+QoS follows the publisher in domain 0. `/tf` and `/tf_static` are not bridged, the MRM Autoware publishes its own TF tree. Only UDP crosses to the MicroAutoBox.
+
+Checked on the toaster (2026-11-26, car parked): all bridged inputs arrive in 101 at their domain-0 rates (LiDAR 10 Hz, GNSS/IMU/twist/TF/steering 100 Hz; camera_f had no publisher in domain 0 at that time), localization initializes from GNSS, EKF 50 Hz, perception objects 10 Hz, domain 0 shows none of the MRM stack's topics, domain_bridge uses about 25 % of one core. Planning and `/mrm/trajectory` need the car on a lane with good GNSS (it was in the garage, 12 m off the map's lanelets).
+
+## Localization (as in the earlier car integration)
+
+No NDT (no usable pointcloud map) and no gyro_odometer: `ioniq5_sensor_kit_launch` relays the ANavS pose and the ANavS twist (topic `/fzi/twist_with_covariance_stamped`) straight into the EKF, and the pose initializer starts from GNSS.
+The earlier integration switched NDT and the stop check off in `pose_initializer.param.yaml` (`[oussama]` comments, now in `autoware_localization_config`). Upstream's `pose_initializer.launch.xml` now sets `ndt_enabled` and `stop_check_enabled` from launch arguments after loading that file, so those file values no longer apply. The car arguments turn them off instead (`pose_source:=anavs`, and `pose_initializer_stop_check:=false`, an argument added in `component_localization.launch.xml`). With the stop check on, initialization failed: its 1 mm/s threshold is below the ANavS twist at standstill (about 3 mm/s, seen in the garage with poor GNSS).
+The team's planning tuning (max_vel 8 m/s, avoidance margins, obstacle stop/slow down/cruise, surround checker) was carried over into `autoware_planning_config` in the merge and is in effect.
+
+## Perception on the car (differences from upstream)
+
+- **Ouster azimuth:** `ouster_format_converter.py` writes the azimuth in the scan direction (clockwise). Upstream's ring outlier filter needs it increasing along a ring and otherwise drops every point (the cloud was empty, no obstacle reactions).
+- **Crop box above the car** (`ouster_node_container.py`, `crop_box_filter_above_vehicle`): vehicle length, body width + 0.4 m, z 1.4-2.3 m. Floating points over the hood (sensor rig / reflections) had become a pedestrian on the hood that blocked the start (surround obstacle checker). Arguments: `above_vehicle_crop_box_min_z`, `_max_z`, `_lateral_margin`.
+- **Time-series obstacle filter** (`component_perception.launch.xml`, `use_obstacle_segmentation_time_series_filter`, default `true`): the occupancy grid based outlier filter of autoware_launch 0.52.0, which the old stack drove with; upstream dropped it (#1942).
+- **`perception_mode`** (default `lidar`): `camera_lidar_fusion` adds ROI cluster fusion with the front camera (YOLOX on camera6). It starts and projects (camera frames `camera_X` in the URDF, ROI offset -0.01 s), but camera classes on the objects are **not verified yet**. The old stack's `camera_lidar_fusion` never got camera classes either (it expected ROIs from cameras 0-5, and the frame `camera_f` was missing), so `lidar` matches its driving behavior.
+- Compared with the old stack (`/home/inkmi5/autoware`, autoware_launch 0.52.0): all team parameters (planning, control, localization, system, vehicle) are in effect, including the static/moving thresholds (`is_moving_threshold_velocity` 1.0, `moving_object_speed_threshold` 1.0, `th_moving_speed` 1.0 / `th_moving_time` 2.0). Open: one emergency brake in the test drive for an obstacle taken as a crossing car; cause not recorded.
+
+## Data
+
+The ML models must match the revisions in `ansible/roles/artifacts/tasks/main.yaml` of **this** repo (e.g. `lidar_centerpoint` v4.1 with the `base/`, `tiny/`, ... folders). The deprecated checkout in `/home/inkmi5/autoware` pins `lidar_centerpoint` v3.0 (flat layout, `deploy_metadata.yaml`: `version: v3.0`). The current launch then fails with "No such file ... lidar_centerpoint/base/ml_package.param.yaml". Note that the role downloads to `~/autoware_data` by default, which on the toaster is the old data folder, not `/mnt/data/autoware/autoware_data`. Fix:
+```bash
+hf download AutowareFoundation/lidar_centerpoint --revision v4.1 --local-dir ../autoware_data/ml_models/lidar_centerpoint
+```
 
 ## Map
 
@@ -63,7 +120,7 @@ Found and fixed with this map:
 
 ## Not checked, needs the car
 
-0. That the launch argument `trajectory_input_topic` set in `mrm_ioniq5.launch.xml` really reaches the bridge (`autobox_trajectory_bridge`, `input_topic`). The fork change is trivial, but an isolated test did not start the bridge node here, so this is **unverified**. Check `ros2 param get /autobox_trajectory_bridge input_topic` first. `mrm_ioniq5.launch.xml` itself was only parsed, never started.
+0. ~~That `trajectory_input_topic` reaches the bridge.~~ Checked on the toaster: `ros2 param get /autobox_trajectory_bridge input_topic` = `/mrm/trajectory` (needs the fork branch `feature/bridge-input-topic`).
 
 1. Latency chain planner to MicroAutoBox (MRM-004: age <= 0.1 s). The simulator only measures up to the ROS topic.
 2. Difference between `/localization/kinematic_state` (EKF) and the raw A-ROX pose that the MABX uses (MRM-001, drive check).

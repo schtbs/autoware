@@ -26,6 +26,12 @@ RUN --mount=type=bind,source=src,target=/home/aw/autoware/src \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+# domain_bridge: copies the sensor topics from the nominal system's domain into the MRM domain (mrm_ioniq5.launch.xml)
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ros-${ROS_DISTRO}-domain-bridge && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
 # Global environment variables for all users and processes
 ENV ROS_DOMAIN_ID=0 \
     ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET \
