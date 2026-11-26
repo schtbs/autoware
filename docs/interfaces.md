@@ -29,7 +29,7 @@ The core must not contain sim-only or car-only code. All new topics use the `/mr
 - `autobox_udp_sender.py`: 31-point UDP packet to the MABX (10.0.10.20:44444).
 - `vehicle_status_publisher.py`: reports AUTONOMOUS/DRIVE permanently, so Autoware plans as if engaged while the MABX drives.
 - Localization is GNSS-based (`sensor_kit/ioniq5_sensor_kit_launch`). We assume it is always available.
-- The built-in Autoware MRM handler must not interfere with the MRM trajectory (see `config/system/mrm_handler`).
+- The built-in Autoware MRM must not interfere with the MRM trajectory: in the MRM stack its comfortable stop does not limit the planned velocity (`autoware_mrm_comfortable_stop_to_planning:=false`, set by `mrm.launch.xml` / `mrm_planning_simulator.launch.xml`).
 
 ## Network isolation on the car
 The nominal AD system is ROS 2 on the same network. Run the MRM Autoware in its own `ROS_DOMAIN_ID` / CycloneDDS config (`config/cyclonedds.xml`) so that generic Autoware topics (`/planning/*`, `/control/*`, ...) don't collide. Only the trigger and the bridge cross over.
