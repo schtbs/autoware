@@ -83,13 +83,14 @@ Warnings (key `warnings`, comma separated). The trajectory is still published:
 Other keys: `state`, `triggered`, `plan_age_s`, `offset_m`, `heading_err_rad`, `blend_len_m`, `stop_distance_m`, `path_remaining_m`, `max_curvature`, and when they apply: `plan_stop_m`, `decel_used`, `blend_factor`, `object_conflict_m`.
 
 ## UDP to the MicroAutoBox (all 10.0.10.20, little endian, fixed size)
-| Port | Packet | Sender | Rate | Deserializer (MATLAB, code generation compatible) |
-|---|---|---|---|---|
-| 44444 | trajectory, 31 points, 1016 B (version 3) | `autobox_udp_sender.py` | with every trajectory | (MABX side) |
-| 44445 | trajectory status, 80 B (`AWTS`, version 1) | `autobox_udp_sender.py` | 50 Hz | `ioniq5_vehicle_launch/matlab/autobox_trajectory_status_deserialize.m` |
-| 44455 | MRM trigger, 28 B (`AWMT`, version 1) | `mrm_trigger_udp_sender` (MRM stack only) | 50 Hz | `mrm_trigger_udp/matlab/mrm_trigger_deserialize.m` |
+| Port | Packet | Sender | Rate |
+|---|---|---|---|
+| 44444 | trajectory, 31 points, 1016 B (version 3) | `autobox_udp_sender.py` | with every trajectory |
+| 44445 | trajectory status, 80 B (`AWTS`, version 1) | `autobox_udp_sender.py` | 50 Hz |
+| 44455 | MRM trigger, 28 B (`AWMT`, version 1) | `mrm_trigger_udp_sender` (MRM stack only) | 50 Hz |
 
 `autobox_ip:=127.0.0.1` sends all three to localhost (dry run). Nothing comes back from the MABX.
+The MATLAB deserializers for 44445 and 44455 live in the MABX Simulink model, not in this repo.
 
 ## MRM trigger (`mrm_trigger_udp`)
 The trigger starts on the MRM PC and goes to the MABX, which switches to the MRM trajectory:
