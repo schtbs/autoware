@@ -25,7 +25,7 @@ Run (from the repo root; works on every machine because paths come from `$PWD`).
 ```bash
 docker run --rm -it --net host --privileged --gpus all \
   -e DISPLAY=${DISPLAY:-:0} -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_VISIBLE_DEVICES=all \
-  -e HOST_UID=$(id -u) -e HOST_GID=$(id -g) -e QT_X11_NO_MITSHM=1 \
+  -e HOST_UID=$(id -u) -e HOST_GID=$(id -g) -e QT_X11_NO_MITSHM=1 -e ROS_LOG_DIR=/home/aw/autoware/log/ros \
   -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
   -v "${AUTOWARE_DATA:-$(dirname "$PWD")/autoware_data}":/home/aw/autoware_data \
   -v "$PWD":/home/aw/autoware \
@@ -57,15 +57,17 @@ Interactive (RViz) in the container, after building (`colcon build --symlink-ins
 ros2 launch autoware_launch mrm_planning_simulator.launch.xml \
   map_path:=/home/aw/autoware_data/maps/sample-map-planning \
   path_file:=$(ros2 pkg prefix mrm_sim_tools)/share/mrm_sim_tools/config/paths/sample_map_lanelet_84.yaml
-# set the initial pose in RViz, change to autonomous mode (the route is generated automatically), then trigger:
-ros2 topic pub --once /mrm/trigger std_msgs/msg/Bool "{data: true}"
+# set the initial pose in RViz, change to autonomous mode (the route is generated automatically), then trigger
+# with RViz's "Set Emergency" button or:
+ros2 topic pub --times 3 /mrm/trigger std_msgs/msg/Bool "{data: true}"
 ```
 
 ## MRM stack on the car (toaster)
-Runs in `ROS_DOMAIN_ID=101`. `domain_bridge` copies the sensor topics from the nominal system's domain 0 (nothing goes back). Stop the old stack first (`docker stop angry_kowalevski practical_hertz`). The stacks start with the fork's launch files in `autoware_launch/launch/` (`autoware.launch.xml`, `mrm.launch.xml`, and the simulators `planning_simulator.launch.xml`, `mrm_planning_simulator.launch.xml`), with the car arguments (ANavS localization, no NDT). The bridge is started by the Ioniq 5 vehicle interface. Commands, dry run (`autobox_ip:=127.0.0.1`) and bridged topics: [docs/car-integration.md](docs/car-integration.md).
+Runs in `ROS_DOMAIN_ID=101`. `domain_bridge` copies the sensor topics from the nominal system's domain 0 (nothing goes back). Stop the old stack first (`docker stop angry_kowalevski practical_hertz`). The stacks start with the fork's launch files in `autoware_launch/launch/` (`autoware.launch.xml`, `mrm.launch.xml`, and the simulators `planning_simulator.launch.xml`, `mrm_planning_simulator.launch.xml`), with the car arguments (ANavS localization, no NDT). The bridge is started by the Ioniq 5 vehicle interface. Commands, dry run (`autobox_ip:=127.0.0.1`) and bridged topics: [docs/car-integration.md](docs/car-integration.md). The MRM trigger goes from the PC to the MABX (RViz "Set Emergency" or `/mrm/trigger` -> UDP 10.0.10.20:44455), see [docs/interfaces.md](docs/interfaces.md).
 
 ## More documentation
+- [docs/setup.md](docs/setup.md): setting up a new PC, building, starting the stacks (sim and car), triggering the MRM.
 - [docs/git-workflow.md](docs/git-workflow.md): branches, PRs, which repo gets which change.
 - [docs/build.md](docs/build.md): building and testing.
 - [docs/requirements.md](docs/requirements.md): tracked MRM requirements (read before changing trajectory generation).
-- [docs/interfaces.md](docs/interfaces.md): topics, trigger, MABX bridge, sim vs car.
+- [docs/interfaces.md](docs/interfaces.md): topics, trigger, MABX UDP packets (trajectory 44444, status 44445, trigger 44455), sim vs car.
