@@ -9,7 +9,8 @@ map, GNSS localization, perception, /mrm/trigger
    -> mrm_stop_planner -> /mrm/trajectory (+ /mrm/status)
 
 SIM adapter:  fake_nominal -> sim_trajectory_mux (switches on trigger) -> Autoware control -> simulator
-CAR adapter:  autobox_trajectory_bridge (input /mrm/trajectory) -> autobox_udp_sender -> MABX
+CAR adapter:  autobox_trajectory_bridge (input /mrm/trajectory) -> autobox_udp_sender -> MABX (trajectory 44444, status 44445)
+              /mrm/trigger -> mrm_trigger_udp_sender -> MABX (trigger 44455)
 ```
 
 ## Core interfaces
@@ -17,7 +18,7 @@ CAR adapter:  autobox_trajectory_bridge (input /mrm/trajectory) -> autobox_udp_s
 |---|---|---|
 | `/localization/kinematic_state` | `nav_msgs/Odometry` | in (GNSS-based ego pose and speed) |
 | `/planning/trajectory` | `autoware_planning_msgs/Trajectory` | in (Autoware planning output) |
-| `/mrm/trigger` | `std_msgs/Bool` (to be confirmed) | in (sim: script/manual, car: from the MABX) |
+| `/mrm/trigger` | `std_msgs/Bool` | in (RViz "Set Emergency" button or `ros2 topic pub`, sim and car; on the car also sent to the MABX) |
 | `/mrm/trajectory` | `autoware_planning_msgs/Trajectory` | out |
 | `/perception/object_recognition/objects` | `autoware_perception_msgs/PredictedObjects` | in (static objects for the footprint check, MRM-008) |
 | `/mrm/status` | `diagnostic_msgs/DiagnosticStatus` (see below) | out, diagnostics only |
@@ -26,13 +27,13 @@ The core must not contain sim-only or car-only code. All new topics use the `/mr
 
 ## Car side (existing, in `src/launcher/autoware_launch/vehicle/ioniq5_vehicle_launch`)
 - `autobox_trajectory_bridge.py`: Autoware trajectory -> resampled and smoothed `ControllerTrajectory` on `/HI5/autoware_controller_trajectory`. For the MRM its `input_topic` is `/mrm/trajectory` (default today: `/planning/trajectory`).
-- `autobox_udp_sender.py`: 31-point UDP packet to the MABX (10.0.10.20:44444).
+- `autobox_udp_sender.py`: 31-point UDP packet to the MABX (10.0.10.20:44444), and the trajectory status packet (44445, see below).
 - `vehicle_status_publisher.py`: reports AUTONOMOUS/DRIVE permanently, so Autoware plans as if engaged while the MABX drives.
 - Localization is GNSS-based (`sensor_kit/ioniq5_sensor_kit_launch`). We assume it is always available.
 - The built-in Autoware MRM must not interfere with the MRM trajectory: in the MRM stack its comfortable stop does not limit the planned velocity (`autoware_mrm_comfortable_stop_to_planning:=false`, set by `mrm.launch.xml` / `mrm_planning_simulator.launch.xml`).
 
 ## Network isolation on the car
-The nominal AD system is ROS 2 on the same network. Run the MRM Autoware in its own `ROS_DOMAIN_ID` / CycloneDDS config (`config/cyclonedds.xml`) so that generic Autoware topics (`/planning/*`, `/control/*`, ...) don't collide. Only the trigger and the bridge cross over.
+The nominal AD system is ROS 2 on the same network. Run the MRM Autoware in its own `ROS_DOMAIN_ID` / CycloneDDS config (`config/cyclonedds.xml`) so that generic Autoware topics (`/planning/*`, `/control/*`, ...) don't collide. Only UDP to the MABX crosses over (trajectory, status, trigger).
 
 ## Route generator (`mrm_route_generator`)
 - The nominal goal is unknown, so the route follows the current lane (straight successors preferred) for `route_length_m` (300 m default) and ends `goal_back_m` before the end of the last lanelet.
@@ -81,5 +82,68 @@ Warnings (key `warnings`, comma separated). The trajectory is still published:
 
 Other keys: `state`, `triggered`, `plan_age_s`, `offset_m`, `heading_err_rad`, `blend_len_m`, `stop_distance_m`, `path_remaining_m`, `max_curvature`, and when they apply: `plan_stop_m`, `decel_used`, `blend_factor`, `object_conflict_m`.
 
+## UDP to the MicroAutoBox (all 10.0.10.20, little endian, fixed size)
+| Port | Packet | Sender | Rate | Deserializer (MATLAB, code generation compatible) |
+|---|---|---|---|---|
+| 44444 | trajectory, 31 points, 1016 B (version 3) | `autobox_udp_sender.py` | with every trajectory | (MABX side) |
+| 44445 | trajectory status, 80 B (`AWTS`, version 1) | `autobox_udp_sender.py` | 50 Hz | `ioniq5_vehicle_launch/matlab/autobox_trajectory_status_deserialize.m` |
+| 44455 | MRM trigger, 28 B (`AWMT`, version 1) | `mrm_trigger_udp_sender` (MRM stack only) | 50 Hz | `mrm_trigger_udp/matlab/mrm_trigger_deserialize.m` |
+
+`autobox_ip:=127.0.0.1` sends all three to localhost (dry run). Nothing comes back from the MABX.
+
 ## MRM trigger (`mrm_trigger_udp`)
-UDP port 45000 (`trigger_port`). The packet format is a **placeholder** until the MABX team defines it: 1 byte, nonzero = trigger (`mrm_trigger_udp/packet.py`). The first trigger is latched by all nodes. A `False` or a lost link never undoes it or triggers.
+The trigger starts on the MRM PC and goes to the MABX, which switches to the MRM trajectory:
+```
+RViz "Set Emergency" -> mrm_trigger_button (/mrm/set_emergency) ┐
+ros2 topic pub /mrm/trigger ...                                 ┴-> /mrm/trigger -> MRM nodes (latch)
+                                                                    -> mrm_trigger_udp_sender -> MABX :44455
+```
+- **RViz button**: the MRM launch files remap RViz's `/api/autoware/set/emergency` to `/mrm/set_emergency` and `/api/autoware/get/emergency` to `/mrm/emergency_state` (arguments `rviz_emergency_service` / `rviz_emergency_topic` of `autoware.launch.xml`; the standard stacks keep the upstream names). `mrm_trigger_button` serves `tier4_external_api_msgs/srv/SetEmergency`: `true` publishes `/mrm/trigger` True, `false` is refused (latched). It publishes the latched state at 10 Hz, so the button turns red also after a trigger from the shell, and repeats `/mrm/trigger` True at 10 Hz once triggered (nodes that start late latch too). Autoware's own external emergency (vehicle_cmd_gate) is not reachable from RViz in the MRM stacks.
+- **Shell**: `ros2 topic pub --times 3 /mrm/trigger std_msgs/msg/Bool "{data: true}"` (domain 101 on the car).
+- **Latching**: the first True is latched by all nodes (route frozen, stop point fixed, trigger = 1 to the MABX). A `False` never undoes it; restart the MRM stack.
+- **Sender** (`trigger_udp_sender`, parameters `autobox_ip`, `port` 44455, `rate_hz` 50): sends cyclically, also before any trigger (trigger = 0), so the MABX can tell a dead link (no new `seq`) from standby. On the trigger the first packet with 1 goes out immediately, not at the next cycle. The simulator starts no sender (the sim mux reacts to `/mrm/trigger` directly).
+- The earlier MABX -> PC receiver (port 45000) is removed.
+
+Trigger packet (`mrm_trigger_udp/packet.py`), 28 bytes:
+
+| Offset | Type | Field |
+|---|---|---|
+| 0 | uint32 | magic `0x41574D54` ("AWMT") |
+| 4 | uint16 | version 1 |
+| 6 | uint8 | trigger: 0 standby, 1 triggered (latched) |
+| 7 | uint8 | reserved |
+| 8 | uint32 | seq, +1 per packet |
+| 12 / 16 | int32 / uint32 | send time sec / nanosec (ROS time) |
+| 20 / 24 | int32 / uint32 | time the trigger was latched, 0 before |
+
+## Trajectory status (port 44445)
+Tells the tracking controller whether the trajectory stream on 44444 is up to date and valid. Sent by `autobox_udp_sender.py` at 50 Hz in both stacks. It always refers to the last trajectory packet (`traj_seq` / `traj_stamp` = its seq and stamp). Floats that are not available are NaN; a NaN compares false, so `traj_age_s <= 0.1` fails safely. 80 bytes:
+
+| Offset | Type | Field | Meaning |
+|---|---|---|---|
+| 0 | uint32 | magic | `0x41575453` ("AWTS") |
+| 4 | uint16 | version | 1 |
+| 6 | uint16 | reserved | |
+| 8 | uint32 | seq | status packet counter |
+| 12 / 16 | int32 / uint32 | stamp | send time (ROS time) |
+| 20 | uint32 | traj_seq | seq of the last trajectory packet |
+| 24 / 28 | int32 / uint32 | traj_stamp | stamp of that packet (odometry stamp it was built from) |
+| 32 | float32 | traj_age_s | now - stamp of the planner trajectory in it (MRM-004) |
+| 36 | float32 | since_last_traj_s | now - send time of that packet (stream stopped?) |
+| 40 | uint8 | valid | 1 = `since_last_traj_s` and `traj_age_s` <= `status_max_age_s` (0.1 s MRM stack, MRM-004; 0.3 s standard stack, planning runs at ~10 Hz), car <= 3 m from the trajectory and, in the MRM stack, `/mrm/status` received within 0.5 s and not `invalid` |
+| 41 | uint8 | source | 0 unknown, 1 standard stack (`/planning/trajectory`), 2 MRM stack (`/mrm/trajectory`) |
+| 42 | uint8 | mrm_state | 0 n/a, 1 standby, 2 active, 3 stopped, 4 invalid |
+| 43 | uint8 | mrm_level | `/mrm/status` level 0 OK, 1 WARN, 2 ERROR, 3 STALE, 255 n/a |
+| 44 | uint8 | triggered | 1 = the MRM stack has latched the trigger |
+| 45 | uint8 | n_valid | valid points in the last trajectory packet |
+| 46 | uint16 | warnings | `/mrm/status` warnings, bit 0 `path_short`, 1 `plan_stop_infeasible`, 2 `object_blend_extended`, 3 `object_stop`, 4 `object_stop_infeasible`, 5 `no_objects`, 6 `stale_plan` |
+| 48 | float32 | horizon_s | planned time ahead of the car in the last packet |
+| 52 | float32 | end_speed_mps | speed at its last valid point (0 = the window ends in standstill, MRM-007) |
+| 56 | float32 | ego_offset_m | car to trajectory distance (MRM-001) |
+| 60 | float32 | heading_err_rad | car heading - trajectory heading at the car (MRM-002) |
+| 64 | float32 | odom_age_s | now - stamp of the odometry used for the last packet |
+| 68 | float32 | plan_age_s | `/mrm/status`: age of Autoware's plan in the MRM |
+| 72 | float32 | stop_distance_m | `/mrm/status`: distance to the MRM stop point |
+| 76 | float32 | path_remaining_m | `/mrm/status`: length of Autoware's path ahead |
+
+Parameters of `autobox_udp_sender`: `status_port` (44445, 0 = off), `status_rate_hz`, `trajectory_source`, `status_max_age_s`, `mrm_status_topic`; `vehicle_interface.launch.xml` sets source and max age from `trajectory_input_topic`.

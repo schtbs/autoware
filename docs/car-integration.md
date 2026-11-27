@@ -11,7 +11,7 @@ nominal AD system ────────────────────�
    Autoware full stack ─ /planning/trajectory ─► mrm_stop_planner │   │
         (sensing, localization, perception,          │            │   │
          planning with avoidance)                    ▼            │   ▼
-   mrm_route_generator                       /mrm/trajectory ─► bridge ─UDP─┘   mrm_trigger_udp
+   mrm_route_generator                       /mrm/trajectory ─► bridge ─UDP─┘   mrm_trigger_udp (44455)
 ```
 
 - The MRM Autoware runs the full stack as on the car today. Its own control and vehicle interface stay as they are. Only the trajectory sent to the MicroAutoBox changes.
@@ -60,7 +60,10 @@ Differences from the normal car launch:
 | Direction | What | Status |
 |---|---|---|
 | MRM PC to MABX | UDP packet with the trajectory (`autobox_udp_sender`, `10.0.10.20:44444`) | existing, unchanged |
-| MABX to MRM PC | MRM trigger over UDP, port 45000 (`mrm_trigger_udp`) | **packet format is a placeholder** (1 byte, nonzero = trigger), see `mrm_trigger_udp/packet.py` |
+| MRM PC to MABX | trajectory status (`autobox_udp_sender`, `10.0.10.20:44445`, 50 Hz, both stacks) | new, not tested with the MABX |
+| MRM PC to MABX | MRM trigger (`mrm_trigger_udp_sender`, `10.0.10.20:44455`, 50 Hz, latched, MRM stack only) | new, not tested with the MABX |
+
+Packet layouts and MATLAB deserializers: [interfaces.md](interfaces.md). The trigger starts on the MRM PC (RViz "Set Emergency" or `ros2 topic pub /mrm/trigger ...`); the earlier MABX-to-PC receiver on port 45000 is removed.
 
 Behavior of the trigger: the first `True` is latched by all MRM nodes (route frozen, stop point fixed). A `False` does not undo it, the MRM stack has to be restarted. A lost link never triggers (nothing is published without a packet).
 
@@ -129,7 +132,7 @@ Next car day, in this order:
 2. Latency chain planner to MicroAutoBox (MRM-004: age <= 0.1 s) and the end of the trajectory window at the MABX in the last 3 s of a stop (MRM-007). The simulator only measures up to the ROS topic.
 3. Difference between `/localization/kinematic_state` (EKF) and the raw A-ROX pose that the MABX uses (MRM-001, drive check).
 4. Rear-axle reference of the pose (MRM-003, lever arm confirmed, drive check open).
-5. Real trigger packet and the reaction of the MABX at standstill.
+5. Trigger (44455) and status (44445) packets at the MABX (deserializers in MATLAB), and the reaction of the MABX to the trigger at standstill.
 6. Load: Autoware perception plus the Python MRM nodes on the MRM PC at 20 Hz.
 7. Built-in Autoware MRM handler: it still runs in the MRM Autoware (comfortable stop is enabled in the fork). It cannot reach the vehicle, because no Autoware command is sent to it. Its comfortable stop used to end up in `/planning/trajectory`, which the MRM stack uses (planning validator rejected the lagging hot-standby plan, the MRM then braked with 2.5 m/s2). `mrm.launch.xml` now keeps it out of planning (`autoware_mrm_comfortable_stop_to_planning:=false`, docs/requirements.md "Decided"). On the car check once: `ros2 topic info -v /planning/scenario_planning/max_velocity_candidates` must not list `mrm_comfortable_stop_operator`, `/mrm/disabled/autoware_comfortable_stop/velocity_limit` must have it as publisher. Still watch `planning_validator` messages in standby.
 8. Map: lanes of the real route (width, stop lines, traffic lights in `campus_ost`). The sample-map virtual traffic light stopped Autoware's plan in the simulator, such elements on the real map need a look.
