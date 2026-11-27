@@ -25,7 +25,7 @@ Run (from the repo root; works on every machine because paths come from `$PWD`).
 ```bash
 docker run --rm -it --net host --privileged --gpus all \
   -e DISPLAY=${DISPLAY:-:0} -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_VISIBLE_DEVICES=all \
-  -e HOST_UID=$(id -u) -e HOST_GID=$(id -g) -e QT_X11_NO_MITSHM=1 \
+  -e HOST_UID=$(id -u) -e HOST_GID=$(id -g) -e QT_X11_NO_MITSHM=1 -e ROS_LOG_DIR=/home/aw/autoware/log/ros \
   -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
   -v "${AUTOWARE_DATA:-$(dirname "$PWD")/autoware_data}":/home/aw/autoware_data \
   -v "$PWD":/home/aw/autoware \

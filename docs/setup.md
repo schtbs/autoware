@@ -76,12 +76,13 @@ Rebuild the image when the Dockerfile or the dependencies of `src/` change. Code
 ```bash
 docker run --rm -it --net host --privileged --gpus all \
   -e DISPLAY=${DISPLAY:-:0} -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_VISIBLE_DEVICES=all \
-  -e HOST_UID=$(id -u) -e HOST_GID=$(id -g) -e QT_X11_NO_MITSHM=1 \
+  -e HOST_UID=$(id -u) -e HOST_GID=$(id -g) -e QT_X11_NO_MITSHM=1 -e ROS_LOG_DIR=/home/aw/autoware/log/ros \
   -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
   -v "${AUTOWARE_DATA:-$(dirname "$PWD")/autoware_data}":/home/aw/autoware_data \
   -v "$PWD":/home/aw/autoware \
   -w /home/aw/autoware --runtime=nvidia autoware-custom:latest bash
 ```
+- `ROS_LOG_DIR` keeps the ROS logs in `log/ros/` of the repo (git-ignored), so they survive the container (`--rm`). Keep them after a car test.
 - On the car (toaster), add `-e ROS_DOMAIN_ID=101` (see "On the car"). Without it the container uses domain 0, which belongs to the nominal AD system and the sensors.
 - `DISPLAY` falls back to `:0`, so over SSH RViz opens on the machine's own screen.
 - A second shell in the same container: `docker exec -it <container> bash` (container name from `docker ps`).

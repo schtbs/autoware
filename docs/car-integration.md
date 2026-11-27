@@ -1,6 +1,6 @@
 # MRM stack on the Ioniq 5
 
-State (2026-11-26): **the standard Autoware stack (`autoware.launch.xml`, domain 101) drove the Ioniq 5 closed loop through the MicroAutoBox, with everything running on the car.** The MRM stack (`mrm.launch.xml`) was started on the toaster with the real sensors (dry run, car parked, see "ROS network") but has not been driven yet: no drive with `/mrm/trajectory` to the MicroAutoBox and no real trigger. The MRM behavior was checked in the planning simulator with the Ioniq 5 vehicle model on the campus map, or in isolation.
+State (2026-11-27): **the standard Autoware stack (`autoware.launch.xml`, domain 101) drove the Ioniq 5 closed loop through the MicroAutoBox** (2026-11-26). **The MRM stack (`mrm.launch.xml`) ran in standby while the car was driven manually around the campus** (2026-11-27): it had a route and `/mrm/trajectory` on most lanes, but found no route on some lanes (see "Route generation on the campus map"). Trajectory (44444), trajectory status (44445) and trigger (44455) arrive at the MicroAutoBox and are decoded in its Simulink model. Not done yet: the MicroAutoBox tracking `/mrm/trajectory` after a real trigger while driving. The MRM behavior was checked in the planning simulator with the Ioniq 5 vehicle model on the campus map.
 
 ## What runs where
 
@@ -60,8 +60,8 @@ Differences from the normal car launch:
 | Direction | What | Status |
 |---|---|---|
 | MRM PC to MABX | UDP packet with the trajectory (`autobox_udp_sender`, `10.0.10.20:44444`) | existing, unchanged |
-| MRM PC to MABX | trajectory status (`autobox_udp_sender`, `10.0.10.20:44445`, 50 Hz, both stacks) | new, not tested with the MABX |
-| MRM PC to MABX | MRM trigger (`mrm_trigger_udp_sender`, `10.0.10.20:44455`, 50 Hz, latched, MRM stack only) | new, not tested with the MABX |
+| MRM PC to MABX | trajectory status (`autobox_udp_sender`, `10.0.10.20:44445`, 50 Hz, both stacks) | arrives at the MABX and decodes (2026-11-27) |
+| MRM PC to MABX | MRM trigger (`mrm_trigger_udp_sender`, `10.0.10.20:44455`, 50 Hz, latched, MRM stack only) | arrives at the MABX and decodes (2026-11-27); MABX reaction not tested yet |
 
 Packet layouts: [interfaces.md](interfaces.md) (the MATLAB deserializers are in the MABX Simulink model). The trigger starts on the MRM PC (RViz "Set Emergency" or `ros2 topic pub /mrm/trigger ...`); the earlier MABX-to-PC receiver on port 45000 is removed.
 
@@ -121,6 +121,15 @@ Found and fixed with this map:
 - The fake nominal and the scenario runner had the same problem and now search for the ego near its last position.
 - A re-route can be refused while Autoware is in a turn or intersection ("planner is not in lane following"). The route generator retries with backoff, the 300 m route with 120 m minimum remaining leaves room for that.
 
+## Route generation on the campus map
+
+Driven 2026-11-27 (manual, MRM in standby): no route on some lanes. A sweep in the simulator (the ego is put in the middle of each of the 185 lanelets, `mrm_route_generator/tools/route_sweep.py`) found two causes:
+- Two degenerate lanelets in `campus_ost`: -1903722 near (-21, 107) and -1903787 near (118, -55). Their left bound starts and ends at the same point. Autoware finds no route to a via point inside them, and many routes pass them. **The map needs fixing.**
+- Goals that Autoware refuses ("Goal's footprint exceeds lane"): goal 2 m before the end of the route (the car front is 3.8 m ahead of the rear axle), and goals in turn lanelets and in the two-way lanelet -1903700.
+
+Fix on autoware_custom branch `fix/mrm-route-map-issues` (not merged): no via point or goal in degenerate lanelets, the goal 5 m back, the route ends at a straight (<= 30 deg), one-way lanelet. Refused route requests in the sweep: 52/189 before, 29/181 with the first two parts; the last part (straight goal lanelet) is not swept yet. The sweep does not cover GNSS offsets > 3 m from the lane on the car ("ego is not on any lanelet").
+The container logs of the drive were lost (`--rm`); next time keep them with `-e ROS_LOG_DIR=/home/aw/autoware/log/ros` in the run command.
+
 ## Not checked, needs the car
 
 0. ~~That `trajectory_input_topic` reaches the bridge.~~ Checked on the toaster: `ros2 param get /autobox_trajectory_bridge input_topic` = `/mrm/trajectory` (on the fork's `main`).
@@ -132,7 +141,7 @@ Next car day, in this order:
 2. Latency chain planner to MicroAutoBox (MRM-004: age <= 0.1 s) and the end of the trajectory window at the MABX in the last 3 s of a stop (MRM-007). The simulator only measures up to the ROS topic.
 3. Difference between `/localization/kinematic_state` (EKF) and the raw A-ROX pose that the MABX uses (MRM-001, drive check).
 4. Rear-axle reference of the pose (MRM-003, lever arm confirmed, drive check open).
-5. Trigger (44455) and status (44445) packets at the MABX (deserializers in the Simulink model), and the reaction of the MABX to the trigger at standstill.
+5. ~~Trigger (44455) and status (44445) packets at the MABX~~ (arrive and decode, 2026-11-27). Open: the reaction of the MABX to the trigger, first at standstill, then while driving.
 6. Load: Autoware perception plus the Python MRM nodes on the MRM PC at 20 Hz.
 7. Built-in Autoware MRM handler: it still runs in the MRM Autoware (comfortable stop is enabled in the fork). It cannot reach the vehicle, because no Autoware command is sent to it. Its comfortable stop used to end up in `/planning/trajectory`, which the MRM stack uses (planning validator rejected the lagging hot-standby plan, the MRM then braked with 2.5 m/s2). `mrm.launch.xml` now keeps it out of planning (`autoware_mrm_comfortable_stop_to_planning:=false`, docs/requirements.md "Decided"). On the car check once: `ros2 topic info -v /planning/scenario_planning/max_velocity_candidates` must not list `mrm_comfortable_stop_operator`, `/mrm/disabled/autoware_comfortable_stop/velocity_limit` must have it as publisher. Still watch `planning_validator` messages in standby.
 8. Map: lanes of the real route (width, stop lines, traffic lights in `campus_ost`). The sample-map virtual traffic light stopped Autoware's plan in the simulator, such elements on the real map need a look.
