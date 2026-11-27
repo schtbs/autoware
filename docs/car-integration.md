@@ -1,6 +1,6 @@
 # MRM stack on the Ioniq 5
 
-State: **started on the toaster in domain 101 with the real sensors (dry run, car parked, see "ROS network"), not driven.** The rest was checked in the planning simulator with the Ioniq 5 vehicle model on the campus map, or in isolation. Not tested yet: the MicroAutoBox link and the stack with the car on a lane.
+State (2026-11-26): **the standard Autoware stack (`autoware.launch.xml`, domain 101) drove the Ioniq 5 closed loop through the MicroAutoBox, with everything running on the car.** The MRM stack (`mrm.launch.xml`) was started on the toaster with the real sensors (dry run, car parked, see "ROS network") but has not been driven yet: no drive with `/mrm/trajectory` to the MicroAutoBox and no real trigger. The MRM behavior was checked in the planning simulator with the Ioniq 5 vehicle model on the campus map, or in isolation.
 
 ## What runs where
 
@@ -120,12 +120,16 @@ Found and fixed with this map:
 
 ## Not checked, needs the car
 
-0. ~~That `trajectory_input_topic` reaches the bridge.~~ Checked on the toaster: `ros2 param get /autobox_trajectory_bridge input_topic` = `/mrm/trajectory` (needs the fork branch `feature/bridge-input-topic`).
+0. ~~That `trajectory_input_topic` reaches the bridge.~~ Checked on the toaster: `ros2 param get /autobox_trajectory_bridge input_topic` = `/mrm/trajectory` (on the fork's `main`).
+0. ~~MicroAutoBox link with the standard stack.~~ Driven closed loop on 2026-11-26 with `autoware.launch.xml`.
 
-1. Latency chain planner to MicroAutoBox (MRM-004: age <= 0.1 s). The simulator only measures up to the ROS topic.
-2. Difference between `/localization/kinematic_state` (EKF) and the raw A-ROX pose that the MABX uses (MRM-001, drive check).
-3. Rear-axle reference of the pose (MRM-003, lever arm confirmed, drive check open).
-4. Real trigger packet and the reaction of the MABX at standstill.
-5. Load: Autoware perception plus the Python MRM nodes on the MRM PC at 20 Hz.
-6. Built-in Autoware MRM handler: it still runs in the MRM Autoware (comfortable stop is enabled in the fork). It can change speed limits in the planning, which the MRM stack ignores (it does not use Autoware's planned speeds). It cannot reach the vehicle, because no Autoware command is sent to it. Not tested with a real fault.
-7. Map: lanes of the real route (width, stop lines, traffic lights in `campus_ost`). The sample-map virtual traffic light stopped Autoware's plan in the simulator, such elements on the real map need a look.
+Next car day, in this order:
+
+1. `mrm.launch.xml` in standby while the nominal drives: `/mrm/trajectory` reaches the bridge and the MicroAutoBox; record a rosbag (`/mrm/trajectory`, `/mrm/status`, `/localization/kinematic_state`, `/perception/object_recognition/objects`). Check `/mrm/status` for `no_objects` (the object check needs the perception output) and for unexpected `object_*` warnings next to parked cars.
+2. Latency chain planner to MicroAutoBox (MRM-004: age <= 0.1 s) and the end of the trajectory window at the MABX in the last 3 s of a stop (MRM-007). The simulator only measures up to the ROS topic.
+3. Difference between `/localization/kinematic_state` (EKF) and the raw A-ROX pose that the MABX uses (MRM-001, drive check).
+4. Rear-axle reference of the pose (MRM-003, lever arm confirmed, drive check open).
+5. Real trigger packet and the reaction of the MABX at standstill.
+6. Load: Autoware perception plus the Python MRM nodes on the MRM PC at 20 Hz.
+7. Built-in Autoware MRM handler: it still runs in the MRM Autoware (comfortable stop is enabled in the fork). It cannot reach the vehicle, because no Autoware command is sent to it. Its comfortable stop used to end up in `/planning/trajectory`, which the MRM stack uses (planning validator rejected the lagging hot-standby plan, the MRM then braked with 2.5 m/s2). `mrm.launch.xml` now keeps it out of planning (`autoware_mrm_comfortable_stop_to_planning:=false`, docs/requirements.md "Decided"). On the car check once: `ros2 topic info -v /planning/scenario_planning/max_velocity_candidates` must not list `mrm_comfortable_stop_operator`, `/mrm/disabled/autoware_comfortable_stop/velocity_limit` must have it as publisher. Still watch `planning_validator` messages in standby.
+8. Map: lanes of the real route (width, stop lines, traffic lights in `campus_ost`). The sample-map virtual traffic light stopped Autoware's plan in the simulator, such elements on the real map need a look.

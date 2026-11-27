@@ -34,7 +34,7 @@ in_container_gui() {   # same display / GPU flags as the normal Autoware contain
 }
 
 echo "building MRM packages ..."
-in_container "colcon build --symlink-install --packages-select mrm_route_generator mrm_stop_planner mrm_sim_tools mrm_launch autoware_launch > build/mrm_build.log 2>&1; source install/setup.bash 2>/dev/null; true" || exit 1
+in_container "colcon build --symlink-install --packages-select mrm_route_generator mrm_stop_planner mrm_sim_tools mrm_trigger_udp mrm_launch autoware_launch > build/mrm_build.log 2>&1; source install/setup.bash 2>/dev/null; true" || exit 1
 
 if [ $# -gt 0 ]; then NAMES="$*"; else NAMES=$(in_container "source install/setup.bash 2>/dev/null; ros2 run mrm_sim_tools run_scenario --file $FILE --list" | grep -v '^\['); fi
 mkdir -p "$ROOT/build/mrm_results"
