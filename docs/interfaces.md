@@ -90,6 +90,7 @@ Other keys: `state`, `triggered`, `plan_age_s`, `offset_m`, `heading_err_rad`, `
 | 44455 | MRM trigger, 28 B (`AWMT`, version 1) | `mrm_trigger_udp_sender` (MRM stack only) | 50 Hz |
 
 `autobox_ip:=127.0.0.1` sends all three to localhost (dry run). Nothing comes back from the MABX.
+`mrm_planning_simulator.launch.xml autobox_ip:=10.0.10.20` sends the same three packets from the simulator (bench test of the MABX model, off by default). Both use `ioniq5_vehicle_launch/launch/autobox_link.launch.xml`.
 The MATLAB deserializers for 44445 and 44455 live in the MABX Simulink model, not in this repo.
 
 ## MRM trigger (`mrm_trigger_udp`)

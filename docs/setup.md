@@ -121,6 +121,8 @@ MRM stack: a fake nominal system drives the car along `path_file`, and Autoware 
 ```bash
 ros2 launch autoware_launch mrm_planning_simulator.launch.xml map_path:=/home/aw/autoware_data/maps/autoware_maps/campus_ost vehicle_model:=ioniq5_vehicle sensor_model:=ioniq5_sensor_kit path_file:=$(ros2 pkg prefix mrm_sim_tools)/share/mrm_sim_tools/config/paths/campus_ost_lanelet_1903750.yaml
 ```
+**Bench test of the MicroAutoBox from the simulator:** append `autobox_ip:=10.0.10.20` to the MRM simulator command. It then sends `/mrm/trajectory` (44444), the status (44445) and the trigger (44455) exactly like `mrm.launch.xml` on the car (`autobox_ip:=127.0.0.1` for localhost). Only with the car parked and the MABX not engaged: the trajectory follows the simulated car, not the real one. On the toaster start this container with `-e ROS_DOMAIN_ID=98`, so it meets neither the nominal system (0) nor the car's MRM stack (101).
+
 Headless scenarios with KPIs (on the host, in the repo root, one fresh container per scenario):
 ```bash
 scripts/run_mrm_scenarios.sh
