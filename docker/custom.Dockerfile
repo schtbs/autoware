@@ -32,6 +32,15 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+# tmux + catmux: one container in the background, any number of terminals attach to its tmux session
+# (docker exec -it -u aw <name> tmux new -A -s aw); catmux starts a whole window layout from config/catmux/*.yaml
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tmux && \
+    pip3 install --no-cache-dir --break-system-packages catmux==0.3.6 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+COPY docker/tmux.conf /etc/tmux.conf
+
 # Global environment variables for all users and processes
 ENV ROS_DOMAIN_ID=0 \
     ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET \

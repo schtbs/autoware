@@ -1,0 +1,21 @@
+---
+# Standard Autoware stack on the car (toaster), drives the car via the MicroAutoBox. Container with ROS_DOMAIN_ID=101.
+# Start (in the container): catmux_create_session -L default config/catmux/car_standard.yaml
+# Windows: Ctrl-b 1..5 or click. Detach: Ctrl-b d. Back: tmux attach (or the docker exec command in docs/setup.md).
+parameters:
+  autobox_ip: 10.0.10.20   # 127.0.0.1 = dry run, nothing reaches the MicroAutoBox
+  bag_prefix: car_standard
+common:
+  default_window: stack
+windows:
+  - name: stack
+    commands:
+      - ros2 launch autoware_launch autoware.launch.xml map_path:=/home/aw/autoware_data/maps/autoware_maps/campus_ost vehicle_model:=ioniq5_vehicle sensor_model:=ioniq5_sensor_kit vehicle_id:=ioniq5 pose_source:=anavs twist_source:=anavs lateral_controller_mode:=pure_pursuit pose_initializer_stop_check:=false autobox_ip:=${autobox_ip}
+  - name: bag
+    commands:
+      - history -s 'ros2 bag record -o log/bags/${bag_prefix}_$(date +%Y-%m-%d_%H%M%S) /mrm/trajectory /mrm/status /mrm/trigger /planning/trajectory /localization/kinematic_state /perception/object_recognition/objects /HI5/autoware_controller_trajectory'
+      - >-
+        echo 'rosbag: press Up, then Enter. Ctrl-C stops it. Bags go to log/bags/ in the repo (git-ignored).'
+  - name: shell
+    commands:
+      - echo "ROS_DOMAIN_ID=$ROS_DOMAIN_ID"

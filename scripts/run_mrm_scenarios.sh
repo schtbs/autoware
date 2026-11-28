@@ -1,7 +1,7 @@
 #!/bin/bash
 # Runs MRM simulation scenarios, each in a fresh headless container (no GPU, no RViz).
 # usage: scripts/run_mrm_scenarios.sh [--gui] [scenario ...]     default: all scenarios of the file
-# --gui: open RViz (Autoware plan + /mrm/trajectory in magenta) to watch the scenarios one after the other;
+# --gui: open RViz (mrm.rviz: /mrm/trajectory orange, Autoware plan cyan) to watch the scenarios one after the other;
 #        needs a display (DISPLAY, falls back to :0) and the nvidia runtime. Each scenario starts 25 s after RViz, the
 #        simulator stays up for 20 s at the end. Stop with: docker stop mrm-gui
 # env:   SCENARIO_FILE (default: sample map scenarios), AUTOWARE_DATA (default: autoware_data next to the repo),

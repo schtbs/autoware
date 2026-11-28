@@ -21,17 +21,17 @@ Build (from the repo root):
 ```bash
 docker build -t autoware-custom:latest -f docker/custom.Dockerfile .
 ```
-Run (from the repo root; works on every machine because paths come from `$PWD`). `autoware_data` is expected next to the repo (`<parent>/autoware` + `<parent>/autoware_data`, e.g. `~/work/` on the desktop, `/mnt/data/autoware/` on the toaster); override with `AUTOWARE_DATA=/some/path`:
+Run (from the repo root; works on every machine because paths come from `$PWD`). `autoware_data` is expected next to the repo (`<parent>/autoware` + `<parent>/autoware_data`, e.g. `~/work/` on the desktop, `/mnt/data/autoware/` on the toaster); override with `AUTOWARE_DATA=/some/path`. The container runs in the background with a fixed name (`aw-sim` domain 98, `aw-car` domain 101, full copy-paste commands in [docs/setup.md](docs/setup.md)):
 ```bash
-docker run --rm -it --net host --privileged --gpus all \
-  -e DISPLAY=${DISPLAY:-:0} -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_VISIBLE_DEVICES=all \
+docker run -d --rm --name aw-sim --net host --privileged --gpus all --runtime=nvidia \
+  -e ROS_DOMAIN_ID=98 -e DISPLAY=${DISPLAY:-:0} -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_VISIBLE_DEVICES=all \
   -e HOST_UID=$(id -u) -e HOST_GID=$(id -g) -e QT_X11_NO_MITSHM=1 -e ROS_LOG_DIR=/home/aw/autoware/log/ros \
   -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
   -v "${AUTOWARE_DATA:-$(dirname "$PWD")/autoware_data}":/home/aw/autoware_data \
-  -v "$PWD":/home/aw/autoware \
-  -w /home/aw/autoware --runtime=nvidia autoware-custom:latest bash
+  -v "$PWD":/home/aw/autoware -w /home/aw/autoware autoware-custom:latest sleep infinity
 ```
-`DISPLAY` falls back to `:0`: over SSH (where `DISPLAY` is empty) RViz opens on the machine's own monitor, e.g. the toaster's screen in the car. With an empty `DISPLAY` RViz crashes on startup ("could not connect to display"). Showing RViz on a remote laptop via `ssh -X` is not set up (it would also need `~/.Xauthority` mounted).
+Terminal in it (tmux; the same command reattaches): `docker exec -it -u aw aw-sim tmux new -A -s aw`. Whole window layouts: `catmux_create_session -L default config/catmux/<sim_mrm|sim_standard|car_mrm|car_standard>.yaml`. Stop: `docker stop aw-sim`.
+`DISPLAY` falls back to `:0`: over SSH (where `DISPLAY` is empty) RViz opens on the machine's own monitor, e.g. the toaster's screen in the car. With an empty `DISPLAY` RViz crashes on startup ("could not connect to display"). Showing RViz on a remote laptop via `ssh -X` is not set up (it would also need `~/.Xauthority` mounted). RViz starts in full screen (`rviz_fullscreen:=false` for a window).
 Inside the container:
 ```bash
 source /opt/ros/jazzy/setup.bash
@@ -48,11 +48,11 @@ scripts/run_mrm_scenarios.sh straight_offset    # one scenario
 cat build/mrm_results/*.txt                     # KPI tables with PASS/FAIL per requirement
 scripts/run_mrm_scenarios.sh --gui parked_car_avoidable   # watch it in RViz (needs a display)
 ```
-In `--gui` mode the MRM trajectory is the magenta line next to Autoware's plan. Each scenario starts 25 s after RViz, the simulator stays up for 20 s at the end. Several names run one after the other.
+In `--gui` mode the MRM trajectory is the orange line, Autoware's hot-standby plan the translucent cyan band. Each scenario starts 25 s after RViz, the simulator stays up for 20 s at the end. Several names run one after the other.
 Scenarios live in `src/custom/autoware_custom/mrm_sim_tools/config/scenarios/`. The KPI limits are in
 `mrm_sim_tools/kpi.py` and come from `docs/requirements.md`.
 
-Interactive (RViz) in the container, after building (`colcon build --symlink-install --packages-select mrm_route_generator mrm_stop_planner mrm_sim_tools mrm_trigger_udp mrm_launch autoware_launch`):
+Interactive (RViz) in the container, after building (`colcon build --symlink-install --packages-select mrm_route_generator mrm_stop_planner mrm_sim_tools mrm_trigger_udp mrm_launch autoware_launch ioniq5_vehicle_launch`):
 ```bash
 ros2 launch autoware_launch mrm_planning_simulator.launch.xml \
   map_path:=/home/aw/autoware_data/maps/sample-map-planning \
@@ -63,7 +63,7 @@ ros2 topic pub --times 3 /mrm/trigger std_msgs/msg/Bool "{data: true}"
 ```
 
 ## MRM stack on the car (toaster)
-Runs in `ROS_DOMAIN_ID=101`. `domain_bridge` copies the sensor topics from the nominal system's domain 0 (nothing goes back). Stop the old stack first (`docker stop angry_kowalevski practical_hertz`). The stacks start with the fork's launch files in `autoware_launch/launch/` (`autoware.launch.xml`, `mrm.launch.xml`, and the simulators `planning_simulator.launch.xml`, `mrm_planning_simulator.launch.xml`), with the car arguments (ANavS localization, no NDT). The bridge is started by the Ioniq 5 vehicle interface. Commands, dry run (`autobox_ip:=127.0.0.1`) and bridged topics: [docs/car-integration.md](docs/car-integration.md). The MRM trigger goes from the PC to the MABX (RViz "Set Emergency" or `/mrm/trigger` -> UDP 10.0.10.20:44455), see [docs/interfaces.md](docs/interfaces.md).
+Runs in `ROS_DOMAIN_ID=101`. `domain_bridge` copies the sensor topics from the nominal system's domain 0 (nothing goes back). No other stack may send to the MABX (`docker ps`: stop an old stack by its name). The stacks start with the fork's launch files in `autoware_launch/launch/` (`autoware.launch.xml`, `mrm.launch.xml`, and the simulators `planning_simulator.launch.xml`, `mrm_planning_simulator.launch.xml`), with the car arguments (ANavS localization, no NDT). The bridge is started by the Ioniq 5 vehicle interface. Commands, dry run (`autobox_ip:=127.0.0.1`) and bridged topics: [docs/car-integration.md](docs/car-integration.md). The MRM trigger goes from the PC to the MABX (RViz "Set Emergency" or `/mrm/trigger` -> UDP 10.0.10.20:44455), see [docs/interfaces.md](docs/interfaces.md).
 
 ## More documentation
 - [docs/setup.md](docs/setup.md): setting up a new PC, building, starting the stacks (sim and car), triggering the MRM.
