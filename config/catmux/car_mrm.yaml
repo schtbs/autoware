@@ -1,0 +1,30 @@
+---
+# MRM stack on the car (toaster). Container with ROS_DOMAIN_ID=101, see docs/setup.md.
+# Start (in the container): catmux_create_session -L default config/catmux/car_mrm.yaml
+# Windows: Ctrl-b 1..5 or click. Detach: Ctrl-b d. Back: tmux attach (or the docker exec command in docs/setup.md).
+parameters:
+  autobox_ip: 10.0.10.20   # 127.0.0.1 = dry run, nothing reaches the MicroAutoBox
+  bag_prefix: car_mrm
+common:
+  default_window: stack
+windows:
+  - name: stack
+    commands:
+      - ros2 launch autoware_launch mrm.launch.xml map_path:=/home/aw/autoware_data/maps/autoware_maps/campus_ost vehicle_model:=ioniq5_vehicle sensor_model:=ioniq5_sensor_kit vehicle_id:=ioniq5 pose_source:=anavs twist_source:=anavs lateral_controller_mode:=pure_pursuit pose_initializer_stop_check:=false autobox_ip:=${autobox_ip}
+  - name: trigger
+    commands:
+      - >-
+        history -s 'ros2 topic pub --times 3 /mrm/trigger std_msgs/msg/Bool "{data: true}"'
+      - >-
+        echo 'MRM trigger: press Up, then Enter (or RViz "Set Emergency"). Latched until the stack restarts.'
+  - name: status
+    commands:
+      - until ros2 topic echo /mrm/status --field message; do sleep 2; done
+  - name: bag
+    commands:
+      - history -s 'ros2 bag record -o log/bags/${bag_prefix}_$(date +%Y-%m-%d_%H%M%S) /mrm/trajectory /mrm/status /mrm/trigger /planning/trajectory /localization/kinematic_state /perception/object_recognition/objects /HI5/autoware_controller_trajectory'
+      - >-
+        echo 'rosbag: press Up, then Enter. Ctrl-C stops it. Bags go to log/bags/ in the repo (git-ignored).'
+  - name: shell
+    commands:
+      - echo "ROS_DOMAIN_ID=$ROS_DOMAIN_ID"

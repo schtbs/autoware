@@ -73,33 +73,60 @@ Rebuild the image when the Dockerfile or the dependencies of `src/` change. Code
 
 ## 6. Start the container
 
+The container runs in the background with a fixed name. You work in it through a tmux session, so you never need `docker exec ... bash` per terminal, and nothing stops when the SSH connection drops. The ROS domain is part of the container command: pick the block for where you are. Run it in the repo root on the host.
+
+**Car (toaster), MRM or standard stack**: domain 101 (the nominal system and the sensors are in 0, `domain_bridge` copies the sensors over):
 ```bash
-docker run --rm -it --net host --privileged --gpus all \
-  -e DISPLAY=${DISPLAY:-:0} -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_VISIBLE_DEVICES=all \
+docker run -d --rm --name aw-car --net host --privileged --gpus all --runtime=nvidia \
+  -e ROS_DOMAIN_ID=101 -e DISPLAY=${DISPLAY:-:0} -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_VISIBLE_DEVICES=all \
   -e HOST_UID=$(id -u) -e HOST_GID=$(id -g) -e QT_X11_NO_MITSHM=1 -e ROS_LOG_DIR=/home/aw/autoware/log/ros \
   -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
   -v "${AUTOWARE_DATA:-$(dirname "$PWD")/autoware_data}":/home/aw/autoware_data \
-  -v "$PWD":/home/aw/autoware \
-  -w /home/aw/autoware --runtime=nvidia autoware-custom:latest bash
+  -v "$PWD":/home/aw/autoware -w /home/aw/autoware autoware-custom:latest sleep infinity
 ```
+**Simulation** (any PC, also the toaster): domain 98, so it never meets the nominal system (0) or the car's stack (101):
+```bash
+docker run -d --rm --name aw-sim --net host --privileged --gpus all --runtime=nvidia \
+  -e ROS_DOMAIN_ID=98 -e DISPLAY=${DISPLAY:-:0} -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_VISIBLE_DEVICES=all \
+  -e HOST_UID=$(id -u) -e HOST_GID=$(id -g) -e QT_X11_NO_MITSHM=1 -e ROS_LOG_DIR=/home/aw/autoware/log/ros \
+  -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+  -v "${AUTOWARE_DATA:-$(dirname "$PWD")/autoware_data}":/home/aw/autoware_data \
+  -v "$PWD":/home/aw/autoware -w /home/aw/autoware autoware-custom:latest sleep infinity
+```
+
+**Open a terminal in the container** (the same command reattaches after an SSH drop or from a second terminal; replace `aw-car` with `aw-sim` for the simulation):
+```bash
+docker exec -it -u aw aw-car tmux new -A -s aw
+```
+In tmux: `Ctrl-b c` new window, `Ctrl-b 1`..`9` or a mouse click switches, `Ctrl-b "` / `Ctrl-b %` splits, `Ctrl-b d` detaches (everything keeps running). The status bar shows the `ROS_DOMAIN_ID`.
+
+**Stop** the container (all stacks in it stop):
+```bash
+docker stop aw-car
+```
+Stop every Autoware container of ours (named `aw-*`, or started from `autoware-custom` without a name):
+```bash
+{ docker ps -q --filter name=^aw-; docker ps -q --filter ancestor=autoware-custom:latest; } | sort -u | xargs -r docker stop
+```
+
+Notes:
 - `ROS_LOG_DIR` keeps the ROS logs in `log/ros/` of the repo (git-ignored), so they survive the container (`--rm`). Keep them after a car test.
-- On the car (toaster), add `-e ROS_DOMAIN_ID=101` (see "On the car"). Without it the container uses domain 0, which belongs to the nominal AD system and the sensors.
-- `DISPLAY` falls back to `:0`, so over SSH RViz opens on the machine's own screen.
-- A second shell in the same container: `docker exec -it <container> bash` (container name from `docker ps`).
+- `DISPLAY` falls back to `:0`, so over SSH RViz opens on the machine's own screen. RViz starts in full screen (`F11` leaves it; `rviz_fullscreen:=false` starts it windowed).
+- Other uses of tmux: several people see the same session at once (laptop over SSH and the car's screen), long jobs (`colcon build`, scenario runs) keep running after you log out, the scroll-back keeps the whole launch log (mouse wheel), and `Ctrl-b :setw synchronize-panes` types into all panes at once.
 
 ## 7. Build the workspace (in the container)
 
 First build (whole workspace, takes a long time):
 ```bash
-source /opt/ros/jazzy/setup.bash && colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
+colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 ```
 After that, only rebuild our packages:
 ```bash
 colcon build --symlink-install --packages-select mrm_route_generator mrm_stop_planner mrm_sim_tools mrm_trigger_udp mrm_launch autoware_launch ioniq5_vehicle_launch
 ```
-Then, in every shell:
+New shells (and new tmux windows) source ROS and `install/` by themselves. In the shell where you just built, once:
 ```bash
-source /opt/ros/jazzy/setup.bash && source install/setup.bash
+source install/setup.bash
 ```
 More on builds and tests: [build.md](build.md).
 
@@ -112,54 +139,79 @@ All entry points are in the fork's `autoware_launch/launch/`:
 | Standard Autoware stack | `planning_simulator.launch.xml` | `autoware.launch.xml` |
 | MRM stack (hot standby) | `mrm_planning_simulator.launch.xml` | `mrm.launch.xml` |
 
-### In simulation (any PC)
+Each command below is complete: copy it into a tmux window of the container. **Or** start a whole tmux layout with catmux (windows: `stack`, `trigger` with the trigger command ready (press Up, Enter), `status` (`/mrm/status`), `bag` with the rosbag command ready, `shell`). The session files are in `config/catmux/`.
 
-Standard stack, Ioniq 5 on the campus map. Set the initial pose and the goal in RViz, then engage:
-```bash
-ros2 launch autoware_launch planning_simulator.launch.xml map_path:=/home/aw/autoware_data/maps/autoware_maps/campus_ost vehicle_model:=ioniq5_vehicle sensor_model:=ioniq5_sensor_kit vehicle_id:=ioniq5
-```
-MRM stack: a fake nominal system drives the car along `path_file`, and Autoware plus the MRM run in standby. Set the initial pose in RViz and switch to autonomous mode (the route is generated automatically), then trigger the MRM (see "Trigger the MRM"):
+### In simulation (container `aw-sim`)
+
+MRM stack: a fake nominal system drives the car along `path_file`, Autoware and the MRM run in standby. Set the initial pose in RViz and switch to autonomous mode (the route is generated automatically), then trigger (section 9).
+
+Without the MicroAutoBox:
 ```bash
 ros2 launch autoware_launch mrm_planning_simulator.launch.xml map_path:=/home/aw/autoware_data/maps/autoware_maps/campus_ost vehicle_model:=ioniq5_vehicle sensor_model:=ioniq5_sensor_kit path_file:=$(ros2 pkg prefix mrm_sim_tools)/share/mrm_sim_tools/config/paths/campus_ost_lanelet_1903750.yaml
 ```
-**Bench test of the MicroAutoBox from the simulator:** append `autobox_ip:=10.0.10.20` to the MRM simulator command. It then sends `/mrm/trajectory` (44444), the status (44445) and the trigger (44455) exactly like `mrm.launch.xml` on the car (`autobox_ip:=127.0.0.1` for localhost). Only with the car parked and the MABX not engaged: the trajectory follows the simulated car, not the real one. On the toaster start this container with `-e ROS_DOMAIN_ID=98`, so it meets neither the nominal system (0) nor the car's MRM stack (101).
+With the MicroAutoBox (bench test: trajectory 44444, status 44445 and trigger 44455 go to 10.0.10.20 exactly as on the car; **only with the car parked and the MABX not engaged**, the trajectory follows the simulated car):
+```bash
+ros2 launch autoware_launch mrm_planning_simulator.launch.xml map_path:=/home/aw/autoware_data/maps/autoware_maps/campus_ost vehicle_model:=ioniq5_vehicle sensor_model:=ioniq5_sensor_kit path_file:=$(ros2 pkg prefix mrm_sim_tools)/share/mrm_sim_tools/config/paths/campus_ost_lanelet_1903750.yaml autobox_ip:=10.0.10.20
+```
+The same as a catmux layout, without / with the MicroAutoBox:
+```bash
+catmux_create_session -L default config/catmux/sim_mrm.yaml
+```
+```bash
+catmux_create_session -L default config/catmux/sim_mrm.yaml --overwrite mabx=true
+```
+
+Standard stack: set the initial pose and the goal in RViz, then engage:
+```bash
+ros2 launch autoware_launch planning_simulator.launch.xml map_path:=/home/aw/autoware_data/maps/autoware_maps/campus_ost vehicle_model:=ioniq5_vehicle sensor_model:=ioniq5_sensor_kit vehicle_id:=ioniq5
+```
+```bash
+catmux_create_session -L default config/catmux/sim_standard.yaml
+```
 
 Headless scenarios with KPIs (on the host, in the repo root, one fresh container per scenario):
 ```bash
 scripts/run_mrm_scenarios.sh
 ```
 
-### On the car (toaster)
+### On the car (container `aw-car`)
 
-1. Stop the old stack. It runs in domain 0 and also sends to the MicroAutoBox. Keep `ouster_lidar_node` running.
-   ```bash
-   docker stop angry_kowalevski practical_hertz
-   ```
-2. Start the container with `-e ROS_DOMAIN_ID=101` (step 6). The vehicle interface starts `domain_bridge`, which copies the sensor topics from domain 0 into 101.
-3. In the container, set the car arguments (the same for both stacks):
-   ```bash
-   CAR_ARGS="map_path:=/home/aw/autoware_data/maps/autoware_maps/campus_ost vehicle_model:=ioniq5_vehicle sensor_model:=ioniq5_sensor_kit vehicle_id:=ioniq5 pose_source:=anavs twist_source:=anavs lateral_controller_mode:=pure_pursuit pose_initializer_stop_check:=false"
-   ```
-4. Start **one** of the stacks:
-   ```bash
-   ros2 launch autoware_launch autoware.launch.xml $CAR_ARGS
-   ```
-   ```bash
-   ros2 launch autoware_launch mrm.launch.xml $CAR_ARGS
-   ```
+1. Make sure no other stack sends to the MicroAutoBox: `docker ps` must not show a container of the old stack (the old Autoware or DDS router from `/home/inkmi5/`; stop it by its name). Keep `ouster_lidar_node` running, it publishes `/ouster/points` in domain 0.
+2. Start the container `aw-car` (section 6, domain 101). The vehicle interface starts `domain_bridge`, which copies the sensor topics from domain 0 into 101.
+3. Start **one** of the stacks.
 
-The standard stack sends `/planning/trajectory` to the MicroAutoBox. The MRM stack sends `/mrm/trajectory` and the MRM trigger. `mrm.launch.xml` refuses to start in domain 0.
+MRM stack (hot standby, sends `/mrm/trajectory` and the MRM trigger):
+```bash
+ros2 launch autoware_launch mrm.launch.xml map_path:=/home/aw/autoware_data/maps/autoware_maps/campus_ost vehicle_model:=ioniq5_vehicle sensor_model:=ioniq5_sensor_kit vehicle_id:=ioniq5 pose_source:=anavs twist_source:=anavs lateral_controller_mode:=pure_pursuit pose_initializer_stop_check:=false
+```
+```bash
+catmux_create_session -L default config/catmux/car_mrm.yaml
+```
+Standard stack (drives the car, sends `/planning/trajectory`):
+```bash
+ros2 launch autoware_launch autoware.launch.xml map_path:=/home/aw/autoware_data/maps/autoware_maps/campus_ost vehicle_model:=ioniq5_vehicle sensor_model:=ioniq5_sensor_kit vehicle_id:=ioniq5 pose_source:=anavs twist_source:=anavs lateral_controller_mode:=pure_pursuit pose_initializer_stop_check:=false
+```
+```bash
+catmux_create_session -L default config/catmux/car_standard.yaml
+```
 
-**Dry run** (nothing reaches the MicroAutoBox, all UDP goes to localhost): append `autobox_ip:=127.0.0.1`. To watch the packets on the host:
+**Dry run** (nothing reaches the MicroAutoBox, all UDP goes to localhost):
+```bash
+ros2 launch autoware_launch mrm.launch.xml map_path:=/home/aw/autoware_data/maps/autoware_maps/campus_ost vehicle_model:=ioniq5_vehicle sensor_model:=ioniq5_sensor_kit vehicle_id:=ioniq5 pose_source:=anavs twist_source:=anavs lateral_controller_mode:=pure_pursuit pose_initializer_stop_check:=false autobox_ip:=127.0.0.1
+```
+```bash
+catmux_create_session -L default config/catmux/car_mrm.yaml --overwrite autobox_ip=127.0.0.1
+```
+To watch the packets on the host:
 ```bash
 sudo tcpdump -i lo -n udp port 44444 or udp port 44445 or udp port 44455
 ```
 
-UDP to the MicroAutoBox (10.0.10.20), details in [interfaces.md](interfaces.md):
+`mrm.launch.xml` refuses to start in domain 0. UDP to the MicroAutoBox (10.0.10.20), details in [interfaces.md](interfaces.md):
 
 | Port | What | Stack |
 |---|---|---|
-| 44444 | trajectory (31 points) | both |
+| 44444 | trajectory (31 points: 6 behind the car, the car, 24 ahead, 0.25-1 m apart by curvature) | both |
 | 44445 | trajectory status (up to date / valid) | both |
 | 44455 | MRM trigger (50 Hz, latched) | MRM |
 
@@ -167,9 +219,11 @@ UDP to the MicroAutoBox (10.0.10.20), details in [interfaces.md](interfaces.md):
 
 In the MRM stacks (simulation and car), either:
 - press **"Set Emergency"** in RViz's Autoware state panel. The MRM launch files point it to the MRM trigger, so it does not trigger Autoware's own emergency stop. The button turns red ("Clear Emergency"). Clearing is refused, because the MRM is latched until the stack restarts.
-- or publish the trigger from a shell in the same container (on the car this is domain 101, already set in the container):
+- or in a tmux window of the same container (catmux: window `trigger`, press Up, Enter):
   ```bash
   ros2 topic pub --times 3 /mrm/trigger std_msgs/msg/Bool "{data: true}"
   ```
 
-On the car, `mrm_trigger_udp_sender` then sends `trigger = 1` to the MicroAutoBox (10.0.10.20:44455), which switches to the MRM trajectory. To start over, restart `mrm.launch.xml`.
+On the car, `mrm_trigger_udp_sender` then sends `trigger = 1` to the MicroAutoBox (10.0.10.20:44455), which switches to the MRM trajectory. To start over, restart `mrm.launch.xml` (`Ctrl-C` in the `stack` window, Up, Enter).
+
+In RViz the MRM trajectory (sent to the MABX) is the **orange** line with orange speed bars; Autoware's hot-standby plan is the wide **translucent cyan** band.

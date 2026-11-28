@@ -20,7 +20,7 @@ nominal AD system ────────────────────�
 
 ## Start
 
-Stop the old stack first. It runs on domain 0 and its `autobox_udp_sender` also talks to the MicroAutoBox: `docker stop angry_kowalevski practical_hertz` (old Autoware in `/home/inkmi5/autoware`, old DDS router in `/home/inkmi5/oussama_ws`). Keep `ouster_lidar_node` running, it publishes `/ouster/points` in domain 0.
+No other stack may send to the MicroAutoBox. The old stack (old Autoware in `/home/inkmi5/autoware`, old DDS router in `/home/inkmi5/oussama_ws`) runs in domain 0 and its `autobox_udp_sender` also talks to the MABX: if `docker ps` shows it, stop it by its name. Keep `ouster_lidar_node` running, it publishes `/ouster/points` in domain 0. Our own containers are named `aw-*` (copy-paste commands, tmux and catmux: [setup.md](setup.md)).
 
 All car and simulation entry points are in the fork's `autoware_launch/launch/`:
 
@@ -31,17 +31,19 @@ All car and simulation entry points are in the fork's `autoware_launch/launch/`:
 
 The MRM launch files include `mrm_launch/mrm_core.launch.xml` (route generator + stop planner, the same in simulation and on the car) from autoware_custom.
 
-The car arguments (same for both stacks):
-```bash
-CAR_ARGS="map_path:=/home/aw/autoware_data/maps/autoware_maps/campus_ost vehicle_model:=ioniq5_vehicle sensor_model:=ioniq5_sensor_kit vehicle_id:=ioniq5 pose_source:=anavs twist_source:=anavs lateral_controller_mode:=pure_pursuit pose_initializer_stop_check:=false"
+The car arguments (the same for both stacks, written out in every command of [setup.md](setup.md)):
+```
+map_path:=/home/aw/autoware_data/maps/autoware_maps/campus_ost vehicle_model:=ioniq5_vehicle sensor_model:=ioniq5_sensor_kit vehicle_id:=ioniq5 pose_source:=anavs twist_source:=anavs lateral_controller_mode:=pure_pursuit pose_initializer_stop_check:=false
 ```
 - `pose_source:=anavs twist_source:=anavs`: pose and twist both come from the ANavS (the twist is published on `/fzi/twist_with_covariance_stamped`). `ioniq5_sensor_kit_launch` relays them straight into the EKF, so no Autoware estimator (NDT, gyro_odometer) runs. Any value that is not an Autoware estimator has this effect, the earlier command line called them `AnaVs` / `FZI`.
 - `pose_initializer_stop_check:=false`: see "Localization".
 
-From the repo root on the toaster, in a container started with the CLAUDE.md run command plus `-e ROS_DOMAIN_ID=101`:
+In the container `aw-car` (domain 101, [setup.md](setup.md) section 6), one of:
 ```bash
-ros2 launch autoware_launch autoware.launch.xml $CAR_ARGS     # standard AD stack
-ros2 launch autoware_launch mrm.launch.xml $CAR_ARGS          # MRM stack (next to the nominal system)
+ros2 launch autoware_launch autoware.launch.xml map_path:=/home/aw/autoware_data/maps/autoware_maps/campus_ost vehicle_model:=ioniq5_vehicle sensor_model:=ioniq5_sensor_kit vehicle_id:=ioniq5 pose_source:=anavs twist_source:=anavs lateral_controller_mode:=pure_pursuit pose_initializer_stop_check:=false
+```
+```bash
+ros2 launch autoware_launch mrm.launch.xml map_path:=/home/aw/autoware_data/maps/autoware_maps/campus_ost vehicle_model:=ioniq5_vehicle sensor_model:=ioniq5_sensor_kit vehicle_id:=ioniq5 pose_source:=anavs twist_source:=anavs lateral_controller_mode:=pure_pursuit pose_initializer_stop_check:=false
 ```
 Both send their trajectory to the MicroAutoBox (`10.0.10.20:44444`), the standard stack `/planning/trajectory`, the MRM stack `/mrm/trajectory`. Add `autobox_ip:=127.0.0.1` for a **dry run** (packets go to localhost). Packets only go out once there is a route and a trajectory.
 `mrm.launch.xml` refuses to start when `ROS_DOMAIN_ID` equals `nominal_domain` (default 0).
@@ -121,14 +123,27 @@ Found and fixed with this map:
 - The fake nominal and the scenario runner had the same problem and now search for the ego near its last position.
 - A re-route can be refused while Autoware is in a turn or intersection ("planner is not in lane following"). The route generator retries with backoff, the 300 m route with 120 m minimum remaining leaves room for that.
 
-## Route generation on the campus map
+## Lanelet map `campus_ost` (fixed 2026-11-28)
 
-Driven 2026-11-27 (manual, MRM in standby): no route on some lanes. A sweep in the simulator (the ego is put in the middle of each of the 185 lanelets, `mrm_route_generator/tools/route_sweep.py`) found two causes:
-- Two degenerate lanelets in `campus_ost`: -1903722 near (-21, 107) and -1903787 near (118, -55). Their left bound starts and ends at the same point. Autoware finds no route to a via point inside them, and many routes pass them. **The map needs fixing.**
-- Goals that Autoware refuses ("Goal's footprint exceeds lane"): goal 2 m before the end of the route (the car front is 3.8 m ahead of the rear axle), and goals in turn lanelets and in the two-way lanelet -1903700.
+The Vector Map Builder export clashed with Autoware. `scripts/fix_lanelet_map.py` fixes it and checks the result with lanelet2's routing graph (run in the container, from the repo root; the original stays as `lanelet2_map.osm.orig`, a rerun starts from it and gives the same map):
+```bash
+python3 scripts/fix_lanelet_map.py /home/aw/autoware_data/maps/autoware_maps/campus_ost
+```
+`--check` only reports. The map is not in git: copy the fixed `lanelet2_map.osm` (and the `.orig`) to the toaster (`/mnt/data/autoware/autoware_data/maps/autoware_maps/campus_ost/`). Lanelet ids are unchanged, two new lanelets come from the split turning loops.
 
-Fix on autoware_custom branch `fix/mrm-route-map-issues` (not merged): no via point or goal in degenerate lanelets, the goal 5 m back, the route ends at a straight (<= 30 deg), one-way lanelet. Refused route requests in the sweep: 52/189 before, 29/181 with the first two parts; the last part (straight goal lanelet) is not swept yet. The sweep does not cover GNSS offsets > 3 m from the lane on the car ("ego is not on any lanelet").
-The container logs of the drive were lost (`--rm`); next time keep them with `-e ROS_LOG_DIR=/home/aw/autoware/log/ros` in the run command.
+What was wrong and what the script does:
+- **Narrow two-way roads without a middle line** (north road -1903670/-1903672, east branch -1903577/-1903702, south -1903662/-1903709, -1903629/-1903705, west curve -1903632/-1903633, three short pieces): two opposite lanelets over the whole 3.5-4.8 m road. Autoware saw them as conflicting lanes. Now split at the middle with a shared `virtual` line (like the map's other middle lines); lanelets before and after now start at the middle. Each half is 1.84-2.4 m, the car's footprint is 1.93 m. Avoidance may use the oncoming half: `use_lane_type: opposite_direction_lane` (already set in the fork) only finds the opposite lane through a shared line.
+- **Separate middle lines that cross** (curves -1903644/-1903667 and -1903615/-1903618, junction approaches): replaced by one shared line halfway between, end nodes merged.
+- **Turning loops** -1903722 and -1903787: the inner bound was a closed ring (start = end point), Autoware found no route into them. Each split into two lanelets.
+- **-1903700** had `one_way=no` next to its own opposite lane -1903634: now `one_way=yes`.
+
+Result: 0 opposite lanelets lying on each other outside junctions (before 11; inside junctions 9 turning lanelets overlap, as junctions do), no degenerate bounds, no two-way lanelets, every successor link kept, every lanelet reaches every other one. Lanelets whose opposite lane shares the middle line (needed for avoidance into it): 133 (before 109).
+Not changed: no `turn_direction` tags on junction lanelets (Autoware's intersection module and turn signals need them), no stop lines or traffic lights.
+
+The route generator puts no goal in a lanelet narrower than `goal_min_width_m` (2.1 m): Autoware refuses such goals ("Goal's footprint exceeds lane"), which the split halves are.
+
+Route sweep (simulator, the ego in the middle of every lanelet, `mrm_route_generator/tools/route_sweep.py`, autoware_custom branch `fix/mrm-route-map-issues` with the width rule): 183 of 187 lanelets get a route, 0 refused. The other 4 (-1903650, -1903692, -1903712, -1903741, junction lanelets) get a route too, Autoware starts it on an overlapping junction lanelet (no refusal). Before the map fix: 52 of 189 requests refused (29 of 181 with the route generator fixes); the causes were the turning loops, goals in turn lanelets and in the two-way lanelet -1903700, and after the split only goals in the narrow halves (19 refusals, all -1903672), fixed by `goal_min_width_m`.
+The sweep does not cover GNSS offsets > 3 m from the lane on the car ("ego is not on any lanelet"). Keep the container logs of the next drive (`ROS_LOG_DIR`, setup.md).
 
 ## Not checked, needs the car
 

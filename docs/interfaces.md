@@ -28,6 +28,7 @@ The core must not contain sim-only or car-only code. All new topics use the `/mr
 ## Car side (existing, in `src/launcher/autoware_launch/vehicle/ioniq5_vehicle_launch`)
 - `autobox_trajectory_bridge.py`: Autoware trajectory -> resampled and smoothed `ControllerTrajectory` on `/HI5/autoware_controller_trajectory`. For the MRM its `input_topic` is `/mrm/trajectory` (default today: `/planning/trajectory`).
 - `autobox_udp_sender.py`: 31-point UDP packet to the MABX (10.0.10.20:44444), and the trajectory status packet (44445, see below).
+- `autobox_trajectory_bridge.py` only smooths the first `max_output_length_m` (60 m; the packet reaches at most 24 m ahead, Autoware's trajectory starts a few m behind the car), which keeps the load low.
 - `vehicle_status_publisher.py`: reports AUTONOMOUS/DRIVE permanently, so Autoware plans as if engaged while the MABX drives.
 - Localization is GNSS-based (`sensor_kit/ioniq5_sensor_kit_launch`). We assume it is always available.
 - The built-in Autoware MRM must not interfere with the MRM trajectory: in the MRM stack its comfortable stop does not limit the planned velocity (`autoware_mrm_comfortable_stop_to_planning:=false`, set by `mrm.launch.xml` / `mrm_planning_simulator.launch.xml`).
@@ -37,6 +38,7 @@ The nominal AD system is ROS 2 on the same network. Run the MRM Autoware in its 
 
 ## Route generator (`mrm_route_generator`)
 - The nominal goal is unknown, so the route follows the current lane (straight successors preferred) for `route_length_m` (300 m default) and ends `goal_back_m` before the end of the last lanelet.
+- Autoware refuses goals whose footprint leaves the lane. The route therefore ends at a lanelet that can take the goal: not degenerate, one-way, turning at most `goal_max_turn_deg` (30), at least `goal_min_width_m` (2.1 m, the narrow-road halves of the campus map are 1.84-2.4 m) wide, and long enough for `goal_back_m` (5 m).
 - The map is read from `map_path` (lanelet2 file + `map_projector_info.yaml`). Projectors: `MGRS`, `LocalCartesian`, `TransverseMercator` (see `docs/car-integration.md`).
 - First route: `/api/routing/set_route_points`. Later changes: `/api/routing/change_route_points` (Autoware answers "already set" to `set_route_points`). Re-routing while autonomous works in the planning simulator.
 - A refused change (e.g. "planner is not in lane following" in a turn) is retried with backoff (`retry_interval_s` 3 s, doubling, at most `retry_max_interval_s` 6 s); the current route stays in use meanwhile. The route is **never cleared**: Autoware refuses `clear_route` while the car moves in autonomous mode under Autoware control (`autoware_default_adapi`, `routing.cpp`), which is always the case in hot standby (`vehicle_status_publisher` reports AUTONOMOUS), and a cleared route would stop `/mrm/trajectory` (MRM-004). The earlier `clear_route` fallback never worked and was removed.
@@ -117,6 +119,15 @@ Trigger packet (`mrm_trigger_udp/packet.py`), 28 bytes:
 | 8 | uint32 | seq, +1 per packet |
 | 12 / 16 | int32 / uint32 | send time sec / nanosec (ROS time) |
 | 20 / 24 | int32 / uint32 | time the trigger was latched, 0 before |
+
+## Trajectory points (port 44444)
+31 points: 6 behind the car every 0.5 m, the car (index 6), 24 ahead. The tracking controller interpolates linearly between points on each point's `s` and `t`, so the spacing ahead follows the curvature (`autobox_udp_sender.py`, `allowed_spacing`):
+- the heading changes at most `max_heading_step_deg` (0.55 deg) and the time at most `max_time_step_s` (0.2 s) between two points, within `min_spacing_m` (0.25 m) and `max_spacing_m` (1.0 m);
+- corners: R = 30 m gives 0.29 m, R <= 26 m the 0.25 m floor; straights (R >= 105 m): 1 m;
+- the curvature is the largest within 1 m ahead of a point, so the spacing shrinks before a corner starts;
+- the trajectory end (stop point, MRM-007) is always a point if it is within the 24 points.
+
+Horizon ahead: on a straight at 30 km/h 24 m = 2.9 s, at 50 km/h 1.7 s; in a corner with R = 20 m at 30 km/h 6 m = 0.7 s (the tracker looks ahead less than 1 s; nobody drives 30 km/h through such a corner). Below `min_horizon` (1 s) the sender warns. The header field `spacing_mm` is the smallest spacing ahead, information only (the MABX uses `s` and `t` of each point).
 
 ## Trajectory status (port 44445)
 Tells the tracking controller whether the trajectory stream on 44444 is up to date and valid. Sent by `autobox_udp_sender.py` at 50 Hz in both stacks. It always refers to the last trajectory packet (`traj_seq` / `traj_stamp` = its seq and stamp). Floats that are not available are NaN; a NaN compares false, so `traj_age_s <= 0.1` fails safely. 80 bytes:
